@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Uma transação financeira de entrada ou saída",
+      "type": "object",
+      "properties": {
+        "tipo": {
+          "type": "string",
+          "enum": ["entrada", "saida"]
+        },
+        "nome": {
+          "type": "string"
+        },
+        "descricao": {
+          "type": "string"
+        },
+        "categoria": {
+          "type": "string"
+        },
+        "valor": {
+          "type": "number"
+        },
+        "formaPagamento": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "description": "Firestore Timestamp de data da transação"
+        },
+        "criadoEm": {
+          "type": "object",
+          "description": "Firestore Timestamp de criação"
+        },
+        "atualizadoEm": {
+          "type": "object",
+          "description": "Firestore Timestamp de atualização"
+        },
+        "criadoPorEmail": {
+          "type": "string"
+        }
+      },
+      "required": ["tipo", "nome", "valor", "data", "criadoEm", "atualizadoEm", "criadoPorEmail"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Uma despesa fixa ou variável com controle de vencimento",
+      "type": "object",
+      "properties": {
+        "tipo": {
+          "type": "string",
+          "enum": ["fixa", "variavel"]
+        },
+        "nome": {
+          "type": "string"
+        },
+        "descricao": {
+          "type": "string"
+        },
+        "categoria": {
+          "type": "string"
+        },
+        "valor": {
+          "type": "number"
+        },
+        "formaPagamento": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "description": "Firestore Timestamp de data da despesa"
+        },
+        "dataVencimento": {
+          "type": "object",
+          "description": "Firestore Timestamp de vencimento"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pendente", "pago"]
+        },
+        "pagoEm": {
+          "type": "object",
+          "description": "Firestore Timestamp de pagamento ou null"
+        },
+        "criadoEm": {
+          "type": "object",
+          "description": "Firestore Timestamp de criação"
+        },
+        "atualizadoEm": {
+          "type": "object",
+          "description": "Firestore Timestamp de atualização"
+        },
+        "criadoPorEmail": {
+          "type": "string"
+        }
+      },
+      "required": ["tipo", "nome", "valor", "data", "dataVencimento", "status", "criadoEm", "atualizadoEm", "criadoPorEmail"]
+    }
+  },
+  "firestore": {
+    "/financeiro/geral/transacoes": {
+      "schema": "Transaction",
+      "description": "Coleção de transações financeiras (entradas e saídas)"
+    },
+    "/financeiro/geral/despesas": {
+      "schema": "Expense",
+      "description": "Coleção de despesas fixas e variáveis"
+    }
+  }
+}
