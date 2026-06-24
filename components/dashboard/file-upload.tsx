@@ -54,8 +54,8 @@ export default function FileUpload({
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      alert("O tamanho do arquivo não pode passar de 10MB.");
+    if (file.size > 50 * 1024 * 1024) {
+      alert("O tamanho do arquivo não pode passar de 50MB.");
       return;
     }
 
@@ -117,7 +117,7 @@ export default function FileUpload({
     <div className="space-y-3">
       <div className="flex flex-col">
         <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">Nota ou comprovante</span>
-        <span className="text-[10px] text-zinc-500">Opcional — anexe uma imagem ou PDF deste lançamento (máx 10MB).</span>
+        <span className="text-[10px] text-zinc-500">Opcional — anexe uma imagem ou PDF de até 50MB.</span>
       </div>
 
       <input

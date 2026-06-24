@@ -254,14 +254,16 @@ export default function ExpenseForm({
       onClose();
     } catch (error: any) {
       console.error("Erro ao enviar nota para Cloudinary:", error);
-      let errMsg = "Erro ao enviar nota. Verifique o Cloudinary.";
+      let errMsg = "Erro ao enviar arquivo. Verifique se o preset do Cloudinary permite upload deste tamanho.";
       if (error.message) {
         if (error.message.includes("preset") || error.message.includes("Preset")) {
-          errMsg = "Upload preset inválido ou não está como Unsigned.";
+          errMsg = "Upload preset inválido ou não está como Unsigned. Verifique se o preset do Cloudinary permite upload deste tamanho.";
         } else if (error.message.includes("configurado") || error.message.includes("Configuração")) {
           errMsg = "Cloudinary não configurado. Verifique .env.local.";
-        } else {
+        } else if (error.message.includes("máximo")) {
           errMsg = error.message;
+        } else {
+          errMsg = `Erro ao enviar arquivo. Verifique se o preset do Cloudinary permite upload deste tamanho. Detalhes: ${error.message}`;
         }
       }
       alert(errMsg);

@@ -15,10 +15,10 @@ export async function uploadToCloudinary(file: File): Promise<CloudinaryUploadRe
     throw new Error("Nenhum arquivo selecionado.");
   }
 
-  const maxSize = 10 * 1024 * 1024;
+  const maxSize = 50 * 1024 * 1024;
 
   if (file.size > maxSize) {
-    throw new Error("O arquivo precisa ter no máximo 10MB.");
+    throw new Error("O arquivo precisa ter no máximo 50MB.");
   }
 
   const allowedTypes = [
