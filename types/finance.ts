@@ -13,6 +13,9 @@ export interface Transaction {
   notaPublicId?: string | null;
   notaTipo?: string | null;
   notaNome?: string | null;
+  origem?: "manual" | "despesa" | "cartao";
+  despesaId?: string | null;
+  despesaTipo?: "fixa" | "variavel" | null;
 }
 
 export interface Expense {
@@ -29,6 +32,8 @@ export interface Expense {
   pagoEm?: string;
   criadoEm: string;
   criadoPorEmail?: string;
+  transacaoGeradaId?: string | null;
+  saidaGerada?: boolean;
 
   // Campos de recorrência inteligente
   diaVencimento?: number;
@@ -45,6 +50,90 @@ export interface Expense {
   notaPublicId?: string | null;
   notaTipo?: string | null;
   notaNome?: string | null;
+
+  // Campos de despesa de cartão de crédito
+  origem?: "manual" | "cartao";
+  cartaoId?: string | null;
+  faturaId?: string | null;
+  itemCartaoId?: string | null;
+
+  // Campos de despesa parcelada no cartão
+  parcelado?: boolean;
+  parcelaAtual?: number;
+  totalParcelas?: number;
+  valorParcela?: number;
+  valorTotalParcelado?: number;
+  grupoParcelamentoId?: string | null;
+  parcelamentoAtivo?: boolean;
+  parcelamentoQuitado?: boolean;
+  quitadoEm?: any; // timestamp, string or null
+}
+
+export interface CreditCard {
+  id: string;
+  nome: string;
+  banco: string;
+  finalCartao: string;
+  diaInicioCiclo: number;
+  diaFimCiclo: number;
+  diaVencimento: number;
+  vencimentoMesSeguinte: boolean;
+  limite?: number | null;
+  ativo: boolean;
+  criadoEm?: any;
+  atualizadoEm?: any;
+  criadoPorEmail?: string;
+}
+
+export interface CardInvoice {
+  id: string;
+  cartaoId: string;
+  cartaoNome: string;
+  banco: string;
+  finalCartao: string;
+  competencia: string; // "YYYY-MM"
+  dataInicioCiclo: any;
+  dataFimCiclo: any;
+  dataVencimento: any;
+  valorTotal: number;
+  totalFixasCartao: number;
+  totalVariaveisCartao: number;
+  totalPagamentos: number;
+  totalCreditosEstornos: number;
+  status: "aberta" | "fechada" | "vencida" | "paga";
+  pagoEm?: any | null;
+  transacaoGeradaId?: string | null;
+  criadoEm?: any;
+  atualizadoEm?: any;
+  criadoPorEmail?: string;
+}
+
+export interface CardItem {
+  id: string;
+  cartaoId: string;
+  cartaoNome: string;
+  banco: string;
+  finalCartao: string;
+  faturaId?: string | null;
+  dataCompra: any;
+  descricao: string;
+  categoria: string;
+  valor: number;
+  valorOriginal?: string;
+  parcelaAtual?: number | null;
+  totalParcelas?: number | null;
+  parcelado: boolean;
+  classificacaoCartao: "fixa_cartao" | "variavel_cartao" | "pagamento_fatura" | "credito_estorno" | "ignorar";
+  status: "pendente" | "pago" | "ignorado";
+  competencia: string;
+  dataInicioCiclo: any;
+  dataFimCiclo: any;
+  dataVencimentoFatura: any;
+  importHash: string;
+  origem: "manual" | "importacao_csv" | "importacao_pdf" | "importacao_xlsx" | "importacao_ofx";
+  criadoEm?: any;
+  atualizadoEm?: any;
+  criadoPorEmail?: string;
 }
 
 export interface FinanceAttachment {
@@ -72,4 +161,39 @@ export interface PaymentMethod {
   criadoEm?: any;
   atualizadoEm?: any;
   criadoPorEmail?: string;
+}
+
+export interface ParsedCardItem {
+  id: string;
+  dataCompra: Date;
+  descricao: string;
+  nome: string;
+  valor: number;
+  valorOriginal: string;
+  parcelaAtual: number | null;
+  totalParcelas: number | null;
+  parcelado: boolean;
+  adicional?: string | null;
+  portadorNome?: string | null;
+  categoriaSugerida: string;
+  destino: "despesa_fixa" | "despesa_variavel" | "ignorar" | "credito_estorno" | "pagamento_fatura";
+  status: "pendente";
+  raw: Record<string, unknown>;
+  alreadyImported?: boolean;
+}
+
+export interface ImportInvoiceResult {
+  metadata: {
+    associado?: string;
+    cooperativa?: string;
+    contaCorrente?: string;
+    cartaoNome?: string;
+    finalCartao?: string;
+    dataVencimento?: Date;
+    valorTotal?: number;
+    situacao?: string;
+    bancoDetectado?: string;
+    formatoDetectado?: "sicredi_csv" | "csv_generico" | "pdf" | "xlsx" | "ofx";
+  };
+  items: ParsedCardItem[];
 }

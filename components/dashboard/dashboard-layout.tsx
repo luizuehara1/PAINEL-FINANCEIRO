@@ -26,7 +26,8 @@ import {
   Check,
   Settings,
   FileText,
-  Trash2
+  Trash2,
+  CreditCard
 } from "lucide-react";
 import {
   exportTransactionsPDF,
@@ -60,6 +61,16 @@ import {
   getExpenseCompetence, 
   getNextMonthDueDate 
 } from "@/lib/finance-utils";
+import { 
+  confirmExpensePaymentAndCreateTransaction, 
+  createExpensePaymentTransaction,
+  deleteLinkedExpenseTransaction,
+  updateLinkedExpenseTransaction
+} from "@/lib/finance-actions";
+import { 
+  generateInstallmentExpenses, 
+  deleteInstallmentGroup 
+} from "@/lib/installment-utils";
 import PaymentAlerts from "./payment-alerts";
 import TransactionForm from "./transaction-form";
 import TransactionTable from "./transaction-table";
@@ -67,6 +78,7 @@ import ExpenseForm from "./expense-form";
 import ExpenseTable from "./expense-table";
 import ReportsSection from "./reports-section";
 import SettingsSection from "./settings-section";
+import CardExpensesSection from "./card-expenses-section";
 
 // Helper functions for date & timestamp conversion
 function stringToTimestamp(dateStr: string): Timestamp {
@@ -89,7 +101,7 @@ function parseTimestampToString(val: any): string {
   return "";
 }
 
-type ActiveSection = "overview" | "transactions" | "fixed-expenses" | "variable-expenses" | "reports" | "registrations";
+type ActiveSection = "overview" | "transactions" | "fixed-expenses" | "variable-expenses" | "reports" | "registrations" | "card-expenses";
 
 export default function DashboardLayout() {
   const [activeTab, setActiveTab] = useState<ActiveSection>("overview");
@@ -119,13 +131,32 @@ export default function DashboardLayout() {
     id: string;
     loading: boolean;
     error: string | null;
+    isParcelado?: boolean;
+    grupoParcelamentoId?: string | null;
+    deleteOption?: "only" | "all";
   }>({
     isOpen: false,
     type: "transaction",
     id: "",
     loading: false,
     error: null,
+    isParcelado: false,
+    grupoParcelamentoId: null,
+    deleteOption: "only",
   });
+
+  // Custom multi-option confirmation state
+  const [expenseActionConfirm, setExpenseActionConfirm] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel: string;
+    extraLabel?: string;
+    onConfirm: () => void;
+    onExtraConfirm?: () => void;
+    onCancel: () => void;
+  } | null>(null);
 
   // Today dates
   const [todayStr, setTodayStr] = useState("");
@@ -229,6 +260,9 @@ export default function DashboardLayout() {
           notaPublicId: d.notaPublicId || null,
           notaTipo: d.notaTipo || null,
           notaNome: d.notaNome || null,
+          origem: d.origem || "manual",
+          despesaId: d.despesaId || null,
+          despesaTipo: d.despesaTipo || null,
         });
       });
       setTransactions(txList);
@@ -275,6 +309,27 @@ export default function DashboardLayout() {
           notaPublicId: d.notaPublicId || null,
           notaTipo: d.notaTipo || null,
           notaNome: d.notaNome || null,
+
+          // Credit card fields
+          origem: d.origem || undefined,
+          cartaoId: d.cartaoId || null,
+          faturaId: d.faturaId || null,
+          itemCartaoId: d.itemCartaoId || null,
+
+          // Installment fields
+          parcelado: d.parcelado ?? false,
+          parcelaAtual: d.parcelaAtual || undefined,
+          totalParcelas: d.totalParcelas || undefined,
+          valorParcela: d.valorParcela || undefined,
+          valorTotalParcelado: d.valorTotalParcelado || undefined,
+          grupoParcelamentoId: d.grupoParcelamentoId || null,
+          parcelamentoAtivo: d.parcelamentoAtivo ?? false,
+          parcelamentoQuitado: d.parcelamentoQuitado ?? false,
+          quitadoEm: d.quitadoEm || null,
+
+          // Automated transaction links
+          transacaoGeradaId: d.transacaoGeradaId || null,
+          saidaGerada: d.saidaGerada ?? false,
         });
       });
       setExpenses(expList);
@@ -486,7 +541,7 @@ export default function DashboardLayout() {
   // 1. All-time general metrics
   const totalEntradasAll = transactions.filter(t => t.tipo === "entrada").reduce((sum, t) => sum + t.valor, 0);
   const totalSaidasAll = transactions.filter(t => t.tipo === "saida").reduce((sum, t) => sum + t.valor, 0);
-  const totalDespesasPagasAll = expenses.filter(e => e.status === "pago").reduce((sum, e) => sum + e.valor, 0);
+  const totalDespesasPagasAll = expenses.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
   const saldoAtualAllTime = totalEntradasAll - totalSaidasAll - totalDespesasPagasAll;
 
   // 2. Month-specific general metrics (Dynamic filter on selected month)
@@ -500,8 +555,8 @@ export default function DashboardLayout() {
   const totalDespesasFixasMonth = fixedInSelectedMonth.reduce((sum, e) => sum + e.valor, 0);
   const totalDespesasVariaveisMonth = variableInSelectedMonth.reduce((sum, e) => sum + e.valor, 0);
 
-  const fixedPaidMonth = fixedInSelectedMonth.filter(e => e.status === "pago").reduce((sum, e) => sum + e.valor, 0);
-  const variablePaidMonth = variableInSelectedMonth.filter(e => e.status === "pago").reduce((sum, e) => sum + e.valor, 0);
+  const fixedPaidMonth = fixedInSelectedMonth.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
+  const variablePaidMonth = variableInSelectedMonth.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
   const totalDespesasPagasMonth = fixedPaidMonth + variablePaidMonth;
   const resultadoDoMes = totalEntradasMonth - totalSaidasMonth - totalDespesasPagasMonth;
 
@@ -591,46 +646,120 @@ export default function DashboardLayout() {
       const finalVencimento = data.tipo === "fixa" ? data.dataVencimento : "";
 
       if (data.id) {
-        const docRef = doc(db, "financeiro", "geral", "despesas", data.id);
-        const updateData: any = {
-          tipo: data.tipo,
-          nome: data.nome,
-          descricao: data.descricao,
-          categoria: data.categoria,
-          valor: data.valor,
-          formaPagamento: data.formaPagamento,
-          data: finalData ? stringToTimestamp(finalData) : Timestamp.now(),
-          dataVencimento: finalVencimento ? stringToTimestamp(finalVencimento) : Timestamp.now(),
-          status: data.status,
-          pagoEm: data.status === "pago" ? (data.pagoEm ? stringToTimestamp(data.pagoEm) : Timestamp.now()) : null,
-          atualizadoEm: serverTimestamp(),
-          notaUrl: data.notaUrl || null,
-          notaPublicId: data.notaPublicId || null,
-          notaTipo: data.notaTipo || null,
-          notaNome: data.notaNome || null,
+        // Mode: EDIT
+        const originalExpense = expenses.find(e => e.id === data.id);
+        const hasLinkedTransaction = originalExpense?.saidaGerada === true || !!originalExpense?.transacaoGeradaId;
+
+        const performUpdate = async (shouldUpdateTx: boolean) => {
+          const docRef = doc(db, "financeiro", "geral", "despesas", data.id!);
+          const updateData: any = {
+            tipo: data.tipo,
+            nome: data.nome,
+            descricao: data.descricao,
+            categoria: data.categoria,
+            valor: data.valor,
+            formaPagamento: data.formaPagamento,
+            data: finalData ? stringToTimestamp(finalData) : Timestamp.now(),
+            dataVencimento: finalVencimento ? stringToTimestamp(finalVencimento) : Timestamp.now(),
+            status: data.status,
+            pagoEm: data.status === "pago" ? (data.pagoEm ? stringToTimestamp(data.pagoEm) : Timestamp.now()) : null,
+            atualizadoEm: serverTimestamp(),
+            notaUrl: data.notaUrl || null,
+            notaPublicId: data.notaPublicId || null,
+            notaTipo: data.notaTipo || null,
+            notaNome: data.notaNome || null,
+            transacaoGeradaId: data.transacaoGeradaId || null,
+            saidaGerada: data.saidaGerada ?? false,
+          };
+
+          if (data.tipo === "fixa") {
+            updateData.recorrente = data.recorrente ?? false;
+            updateData.recorrenciaAtiva = data.recorrenciaAtiva ?? false;
+            updateData.diaVencimento = data.diaVencimento || Number(finalVencimento.split("-")[2]) || 10;
+            updateData.competencia = data.competencia || getExpenseCompetence(finalVencimento);
+            if (data.baixadaCompletamente !== undefined) {
+              updateData.baixadaCompletamente = data.baixadaCompletamente;
+            }
+            if (data.baixadaEm) {
+              updateData.baixadaEm = stringToTimestamp(data.baixadaEm);
+            }
+            if (data.motivoBaixa !== undefined) {
+              updateData.motivoBaixa = data.motivoBaixa;
+            }
+          }
+
+          await updateDoc(docRef, updateData);
+
+          if (shouldUpdateTx && hasLinkedTransaction && originalExpense) {
+            const updatedExpenseForTx: Expense = {
+              ...originalExpense,
+              ...data,
+            } as Expense;
+            await updateLinkedExpenseTransaction(updatedExpenseForTx);
+          }
         };
 
-        if (data.tipo === "fixa") {
-          updateData.recorrente = data.recorrente ?? false;
-          updateData.recorrenciaAtiva = data.recorrenciaAtiva ?? false;
-          updateData.diaVencimento = data.diaVencimento || Number(finalVencimento.split("-")[2]) || 10;
-          updateData.competencia = data.competencia || getExpenseCompetence(finalVencimento);
-          if (data.baixadaCompletamente !== undefined) {
-            updateData.baixadaCompletamente = data.baixadaCompletamente;
+        if (hasLinkedTransaction) {
+          setExpenseActionConfirm({
+            isOpen: true,
+            title: "Atualizar saída vinculada?",
+            message: "Esta despesa já gerou uma saída automática. Deseja atualizar também a saída vinculada?",
+            confirmLabel: "Atualizar despesa e saída",
+            cancelLabel: "Cancelar",
+            extraLabel: "Atualizar somente despesa",
+            onConfirm: async () => {
+              await performUpdate(true);
+              setExpenseActionConfirm(null);
+              setIsExpenseModalOpen(false);
+              setEditingExpense(null);
+            },
+            onExtraConfirm: async () => {
+              await performUpdate(false);
+              setExpenseActionConfirm(null);
+              setIsExpenseModalOpen(false);
+              setEditingExpense(null);
+            },
+            onCancel: () => {
+              setExpenseActionConfirm(null);
+            }
+          });
+          return;
+        } else {
+          // If edited to paid status, and didn't have a transaction, auto-create one
+          if (data.status === "pago" && originalExpense?.status !== "pago") {
+            const tempExpense: Expense = {
+              id: data.id,
+              ...data,
+              pagoEm: new Date().toISOString(),
+            } as any;
+            const genTxId = await createExpensePaymentTransaction(tempExpense, userEmail);
+            if (genTxId) {
+              data.saidaGerada = true;
+              data.transacaoGeradaId = genTxId;
+            }
           }
-          if (data.baixadaEm) {
-            updateData.baixadaEm = stringToTimestamp(data.baixadaEm);
-          }
-          if (data.motivoBaixa !== undefined) {
-            updateData.motivoBaixa = data.motivoBaixa;
-          }
+          await performUpdate(false);
         }
-
-        await updateDoc(docRef, updateData);
       } else {
+        // Mode: CREATE
         const colRef = collection(db, "financeiro", "geral", "despesas");
         
-        if (data.tipo === "fixa") {
+        if (data.tipo === "fixa" && data.formaPagamento.toLowerCase() === "cartão de crédito" && data.parcelado) {
+          await generateInstallmentExpenses({
+            nome: data.nome,
+            valorTotal: data.valor,
+            totalParcelas: data.totalParcelas || 12,
+            primeiraDataVencimento: finalVencimento,
+            categoria: data.categoria,
+            formaPagamento: data.formaPagamento,
+            descricao: data.descricao || "",
+            criadoPorEmail: userEmail,
+            notaUrl: data.notaUrl || null,
+            notaPublicId: data.notaPublicId || null,
+            notaTipo: data.notaTipo || null,
+            notaNome: data.notaNome || null,
+          });
+        } else if (data.tipo === "fixa") {
           const competence = getExpenseCompetence(finalVencimento);
           const diaVenc = data.diaVencimento || Number(finalVencimento.split("-")[2]) || 10;
           const grupoId = data.grupoRecorrenciaId || `group_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -666,6 +795,22 @@ export default function DashboardLayout() {
             notaTipo: data.notaTipo || null,
             notaNome: data.notaNome || null,
           });
+
+          // If created as "pago", auto-create a transaction
+          if (data.status === "pago") {
+            const tempExpense: Expense = {
+              id: newDoc.id,
+              ...data,
+              pagoEm: new Date().toISOString(),
+            } as any;
+            const genTxId = await createExpensePaymentTransaction(tempExpense, userEmail);
+            if (genTxId) {
+              await updateDoc(doc(db, "financeiro", "geral", "despesas", newDoc.id), {
+                saidaGerada: true,
+                transacaoGeradaId: genTxId,
+              });
+            }
+          }
 
           // If it's saved as "pago" and marked as recurring, auto-create the next month's pending installment
           if (data.status === "pago" && data.recorrente) {
@@ -704,7 +849,7 @@ export default function DashboardLayout() {
           }
         } else {
           // Variable Expense (non-recurring)
-          await addDoc(colRef, {
+          const newDoc = await addDoc(colRef, {
             tipo: "variavel",
             nome: data.nome,
             descricao: data.descricao || "",
@@ -723,6 +868,22 @@ export default function DashboardLayout() {
             notaTipo: data.notaTipo || null,
             notaNome: data.notaNome || null,
           });
+
+          // If created as "pago", auto-create a transaction
+          if (data.status === "pago") {
+            const tempExpense: Expense = {
+              id: newDoc.id,
+              ...data,
+              pagoEm: new Date().toISOString(),
+            } as any;
+            const genTxId = await createExpensePaymentTransaction(tempExpense, userEmail);
+            if (genTxId) {
+              await updateDoc(doc(db, "financeiro", "geral", "despesas", newDoc.id), {
+                saidaGerada: true,
+                transacaoGeradaId: genTxId,
+              });
+            }
+          }
         }
       }
       setEditingExpense(null);
@@ -737,17 +898,67 @@ export default function DashboardLayout() {
   };
 
   const handleExpenseDelete = (id: string) => {
+    const expense = expenses.find(e => e.id === id);
+    if (!expense) return;
+
+    const isParcelado = expense.parcelado ?? false;
+    const grupoParcelamentoId = expense.grupoParcelamentoId || null;
+    const hasLinkedTransaction = expense.saidaGerada === true || !!expense.transacaoGeradaId;
+
+    if (hasLinkedTransaction) {
+      setExpenseActionConfirm({
+        isOpen: true,
+        title: "Excluir despesa paga?",
+        message: "Esta despesa já gerou uma saída automática. Deseja excluir também a saída vinculada?",
+        confirmLabel: "Excluir despesa e saída vinculada",
+        cancelLabel: "Cancelar",
+        extraLabel: "Excluir somente despesa",
+        onConfirm: async () => {
+          try {
+            if (isParcelado && grupoParcelamentoId) {
+              await deleteInstallmentGroup(grupoParcelamentoId);
+            } else {
+              await deleteDoc(doc(db, "financeiro", "geral", "despesas", id));
+            }
+            if (expense.transacaoGeradaId) {
+              await deleteLinkedExpenseTransaction(expense.transacaoGeradaId);
+            }
+            console.log("Despesa e transação excluídas");
+          } catch (err) {
+            console.error(err);
+          }
+          setExpenseActionConfirm(null);
+        },
+        onExtraConfirm: async () => {
+          try {
+            await deleteDoc(doc(db, "financeiro", "geral", "despesas", id));
+            console.log("Despesa excluída");
+          } catch (err) {
+            console.error(err);
+          }
+          setExpenseActionConfirm(null);
+        },
+        onCancel: () => {
+          setExpenseActionConfirm(null);
+        }
+      });
+      return;
+    }
+
     setDeleteConfirmConfig({
       isOpen: true,
       type: "expense",
       id,
       loading: false,
       error: null,
+      isParcelado,
+      grupoParcelamentoId,
+      deleteOption: "only",
     });
   };
 
   const handleExecuteDelete = async () => {
-    const { id, type } = deleteConfirmConfig;
+    const { id, type, isParcelado, grupoParcelamentoId, deleteOption } = deleteConfirmConfig;
     if (!id) return;
 
     setDeleteConfirmConfig(prev => ({ ...prev, loading: true, error: null }));
@@ -758,9 +969,14 @@ export default function DashboardLayout() {
         await deleteDoc(docRef);
         console.log("Transação excluída com sucesso:", id);
       } else {
-        const docRef = doc(db, "financeiro", "geral", "despesas", id);
-        await deleteDoc(docRef);
-        console.log("Despesa excluída com sucesso:", id);
+        if (isParcelado && grupoParcelamentoId && deleteOption === "all") {
+          await deleteInstallmentGroup(grupoParcelamentoId);
+          console.log("Grupo de parcelamento excluído com sucesso:", grupoParcelamentoId);
+        } else {
+          const docRef = doc(db, "financeiro", "geral", "despesas", id);
+          await deleteDoc(docRef);
+          console.log("Despesa excluída com sucesso:", id);
+        }
       }
       setDeleteConfirmConfig({
         isOpen: false,
@@ -768,6 +984,9 @@ export default function DashboardLayout() {
         id: "",
         loading: false,
         error: null,
+        isParcelado: false,
+        grupoParcelamentoId: null,
+        deleteOption: "only",
       });
     } catch (err: any) {
       console.error(`Erro ao excluir ${type}:`, err);
@@ -785,10 +1004,78 @@ export default function DashboardLayout() {
 
   const handleConfirmPaid = async (id: string) => {
     const userEmail = currentUser?.email || "";
+    const expense = expenses.find(e => e.id === id);
+    if (!expense) return;
     try {
-      await confirmFixedExpensePayment(id, expenses, userEmail);
+      await confirmExpensePaymentAndCreateTransaction(expense, userEmail, expenses);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `financeiro/geral/despesas/${id}`);
+    }
+  };
+
+  const handleCancelPayment = async (id: string) => {
+    const expense = expenses.find(e => e.id === id);
+    if (!expense) return;
+
+    const hasLinkedTransaction = expense.saidaGerada === true || !!expense.transacaoGeradaId;
+
+    if (hasLinkedTransaction) {
+      setExpenseActionConfirm({
+        isOpen: true,
+        title: "Cancelar pagamento?",
+        message: "Esta despesa já gerou uma saída automática. Deseja excluir também a saída vinculada?",
+        confirmLabel: "Sim, excluir saída vinculada",
+        cancelLabel: "Cancelar",
+        extraLabel: "Não, manter saída vinculada",
+        onConfirm: async () => {
+          try {
+            const docRef = doc(db, "financeiro", "geral", "despesas", id);
+            await updateDoc(docRef, {
+              status: "pendente",
+              pagoEm: null,
+              saidaGerada: false,
+              transacaoGeradaId: null,
+              atualizadoEm: serverTimestamp()
+            });
+            if (expense.transacaoGeradaId) {
+              await deleteLinkedExpenseTransaction(expense.transacaoGeradaId);
+            }
+          } catch (err) {
+            console.error(err);
+          }
+          setExpenseActionConfirm(null);
+        },
+        onExtraConfirm: async () => {
+          try {
+            const docRef = doc(db, "financeiro", "geral", "despesas", id);
+            await updateDoc(docRef, {
+              status: "pendente",
+              pagoEm: null,
+              saidaGerada: false,
+              transacaoGeradaId: null,
+              atualizadoEm: serverTimestamp()
+            });
+          } catch (err) {
+            console.error(err);
+          }
+          setExpenseActionConfirm(null);
+        },
+        onCancel: () => {
+          setExpenseActionConfirm(null);
+        }
+      });
+    } else {
+      // Just mark back as pending
+      try {
+        const docRef = doc(db, "financeiro", "geral", "despesas", id);
+        await updateDoc(docRef, {
+          status: "pendente",
+          pagoEm: null,
+          atualizadoEm: serverTimestamp()
+        });
+      } catch (err) {
+        console.error(err);
+      }
     }
   };
 
@@ -818,6 +1105,7 @@ export default function DashboardLayout() {
     { id: "variable-expenses", label: "Despesas Variáveis", icon: Layers },
     { id: "reports", label: "Relatórios de BI", icon: BarChart3 },
     { id: "registrations", label: "Cadastros", icon: Settings },
+    { id: "card-expenses", label: "Despesas Cartão", icon: CreditCard },
   ];
 
   if (authLoading) {
@@ -1076,6 +1364,7 @@ export default function DashboardLayout() {
                 {activeTab === "variable-expenses" && "Despesas Variáveis"}
                 {activeTab === "reports" && "Relatórios de BI"}
                 {activeTab === "registrations" && "Cadastros do Sistema"}
+                {activeTab === "card-expenses" && "Despesas Cartão"}
               </h1>
               <p className="hidden sm:block text-xs text-zinc-500 mt-0.5">
                 Dados reais carregados do Firebase Firestore de forma segura.
@@ -1091,7 +1380,7 @@ export default function DashboardLayout() {
 
             {/* Quick Action buttons */}
             <div className="flex gap-2">
-              {activeTab !== "registrations" && (
+              {activeTab !== "registrations" && activeTab !== "card-expenses" && (
                 <button
                   id="btn-exportar-pdf"
                   onClick={handleExportPDF}
@@ -1332,6 +1621,7 @@ export default function DashboardLayout() {
                     onDelete={handleExpenseDelete}
                     onConfirmPaid={handleConfirmPaid}
                     onCloseRecurring={handleCloseRecurring}
+                    onCancelPayment={handleCancelPayment}
                   />
                 </div>
 
@@ -1713,6 +2003,7 @@ export default function DashboardLayout() {
                 onDelete={handleExpenseDelete}
                 onConfirmPaid={handleConfirmPaid}
                 onCloseRecurring={handleCloseRecurring}
+                onCancelPayment={handleCancelPayment}
               />
 
             </div>
@@ -1873,6 +2164,7 @@ export default function DashboardLayout() {
                 onDelete={handleExpenseDelete}
                 onConfirmPaid={handleConfirmPaid}
                 onCloseRecurring={handleCloseRecurring}
+                onCancelPayment={handleCancelPayment}
               />
 
             </div>
@@ -1891,6 +2183,13 @@ export default function DashboardLayout() {
           {/* 6. REGISTRATIONS SECTION */}
           {activeTab === "registrations" && (
             <SettingsSection 
+              userEmail={currentUser?.email || ""}
+            />
+          )}
+
+          {/* 7. CARD EXPENSES SECTION */}
+          {activeTab === "card-expenses" && (
+            <CardExpensesSection 
               userEmail={currentUser?.email || ""}
             />
           )}
@@ -1972,6 +2271,38 @@ export default function DashboardLayout() {
                   Essa ação não pode ser desfeita. O registro será removido permanentemente do Firestore.
                 </p>
 
+                {deleteConfirmConfig.type === "expense" && deleteConfirmConfig.isParcelado && (
+                  <div className="mb-5 p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 space-y-3">
+                    <p className="text-xs font-bold text-purple-400">
+                      Essa despesa faz parte de um parcelamento.
+                    </p>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2.5 text-xs text-zinc-300 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="deleteOption"
+                          value="only"
+                          checked={deleteConfirmConfig.deleteOption === "only"}
+                          onChange={() => setDeleteConfirmConfig(prev => ({ ...prev, deleteOption: "only" }))}
+                          className="w-4 h-4 rounded-full bg-zinc-950 border-zinc-800 text-purple-500 focus:ring-0 cursor-pointer"
+                        />
+                        <span>Excluir somente esta parcela</span>
+                      </label>
+                      <label className="flex items-center gap-2.5 text-xs text-zinc-300 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="deleteOption"
+                          value="all"
+                          checked={deleteConfirmConfig.deleteOption === "all"}
+                          onChange={() => setDeleteConfirmConfig(prev => ({ ...prev, deleteOption: "all" }))}
+                          className="w-4 h-4 rounded-full bg-zinc-950 border-zinc-800 text-purple-500 focus:ring-0 cursor-pointer"
+                        />
+                        <span className="font-semibold text-red-400">Excluir todas as parcelas deste parcelamento</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
                 {deleteConfirmConfig.error && (
                   <div className="mb-5 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex gap-2.5 items-start">
                     <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -2005,6 +2336,85 @@ export default function DashboardLayout() {
                         Excluir
                       </>
                     )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Custom Action Confirmation Modal */}
+      <AnimatePresence>
+        {expenseActionConfirm?.isOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={expenseActionConfirm.onCancel}
+              className="absolute inset-0 bg-black/85 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-md overflow-hidden rounded-3xl p-[1px] bg-gradient-to-tr from-emerald-500/30 via-zinc-800 to-zinc-800 shadow-2xl z-10"
+            >
+              <div className="bg-zinc-950 rounded-[23px] px-6 py-7 border border-white/5">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                      <HelpCircle className="w-5 h-5 animate-pulse" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-bold text-white tracking-wide">
+                        {expenseActionConfirm.title}
+                      </h4>
+                      <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                        AÇÃO AUTOMÁTICA DETECTADA
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={expenseActionConfirm.onCancel}
+                    className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 text-zinc-400 hover:text-white transition-all hover:scale-105 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <p className="text-xs text-zinc-300 leading-relaxed mb-6">
+                  {expenseActionConfirm.message}
+                </p>
+
+                <div className="flex flex-col gap-2.5">
+                  <button
+                    type="button"
+                    onClick={expenseActionConfirm.onConfirm}
+                    className="w-full px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/40 active:scale-95"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    {expenseActionConfirm.confirmLabel}
+                  </button>
+                  
+                  {expenseActionConfirm.extraLabel && (
+                    <button
+                      type="button"
+                      onClick={expenseActionConfirm.onExtraConfirm}
+                      className="w-full px-5 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 font-semibold text-xs text-zinc-300 hover:text-white border border-white/5 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      {expenseActionConfirm.extraLabel}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={expenseActionConfirm.onCancel}
+                    className="w-full px-5 py-3 rounded-xl bg-zinc-950 hover:bg-zinc-900 font-medium text-xs text-zinc-500 hover:text-zinc-300 transition-all cursor-pointer"
+                  >
+                    {expenseActionConfirm.cancelLabel}
                   </button>
                 </div>
               </div>

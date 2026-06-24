@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Transaction, Expense } from "@/types/finance";
+import { Transaction, Expense, CardInvoice, CardItem, CreditCard } from "@/types/finance";
 
 export function formatCurrencyBRL(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -612,4 +612,94 @@ export function exportReportsPDF(
 
   applyFooter(doc, userEmail);
   doc.save(`relatorio_bi_${period || "geral"}.pdf`);
+}
+
+export function exportCardInvoicePDF(
+  invoice: CardInvoice,
+  items: CardItem[],
+  card: CreditCard,
+  userEmail: string
+) {
+  const doc = new jsPDF();
+  applyStyles(doc, "Fatura de Cartão de Crédito", `Detalhamento Mensal - ${card.nome} (${invoice.competencia})`, userEmail);
+
+  // Details
+  doc.setTextColor(24, 24, 27);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Detalhes do Cartão & Fatura:", 14, 48);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(`Cartão: ${card.nome} (•••• ${card.finalCartao})`, 14, 54);
+  doc.text(`Banco: ${card.banco}`, 14, 60);
+  doc.text(`Competência: ${invoice.competencia}`, 14, 66);
+
+  const dueStr = invoice.dataVencimento ? formatDateBR(invoice.dataVencimento.toDate ? invoice.dataVencimento.toDate().toISOString() : String(invoice.dataVencimento)) : "-";
+  doc.text(`Vencimento: ${dueStr}`, 110, 54);
+  doc.text(`Status: ${invoice.status ? invoice.status.toUpperCase() : "ABERTA"}`, 110, 60);
+
+  // Summary Cards
+  doc.setFillColor(244, 244, 245);
+  doc.roundedRect(14, 74, 42, 16, 2, 2, "F");
+  doc.roundedRect(61, 74, 42, 16, 2, 2, "F");
+  doc.roundedRect(108, 74, 42, 16, 2, 2, "F");
+  doc.roundedRect(155, 74, 42, 16, 2, 2, "F");
+
+  doc.setFontSize(7);
+  doc.setTextColor(113, 113, 122);
+  doc.text("TOTAL FIXAS", 17, 79);
+  doc.text("TOTAL VARIÁVEIS", 64, 79);
+  doc.text("PAGOS/CRÉDITOS", 111, 79);
+  doc.text("VALOR TOTAL FATURA", 158, 79);
+
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(245, 158, 11);
+  doc.text(formatCurrencyBRL(invoice.totalFixasCartao || 0), 17, 86);
+  doc.setTextColor(59, 130, 246);
+  doc.text(formatCurrencyBRL(invoice.totalVariaveisCartao || 0), 64, 86);
+  doc.setTextColor(16, 185, 129);
+  doc.text(formatCurrencyBRL((invoice.totalPagamentos || 0) + (invoice.totalCreditosEstornos || 0)), 111, 86);
+  doc.setTextColor(239, 68, 68);
+  doc.text(formatCurrencyBRL(invoice.valorTotal || 0), 158, 86);
+
+  // Table Data
+  const tableBody = items.length > 0
+    ? items.map(item => [
+        formatDateBR(item.dataCompra?.toDate ? item.dataCompra.toDate().toISOString() : String(item.dataCompra)),
+        item.descricao,
+        item.categoria,
+        item.parcelaAtual ? `${item.parcelaAtual}/${item.totalParcelas}` : "1/1",
+        item.classificacaoCartao === "fixa_cartao" ? "FIXA" : item.classificacaoCartao === "variavel_cartao" ? "VARIÁVEL" : item.classificacaoCartao ? item.classificacaoCartao.toUpperCase() : "VARIÁVEL",
+        formatCurrencyBRL(item.valor)
+      ])
+    : [["Nenhum lançamento nesta competência.", "", "", "", "", ""]];
+
+  autoTable(doc, {
+    startY: 96,
+    head: [["Data", "Descrição", "Categoria", "Parcela", "Classificação", "Valor"]],
+    body: tableBody,
+    theme: "striped",
+    headStyles: {
+      fillColor: [18, 18, 20],
+      textColor: [255, 255, 255],
+      fontSize: 8,
+      fontStyle: "bold"
+    },
+    bodyStyles: {
+      fontSize: 8
+    },
+    columnStyles: {
+      0: { cellWidth: 20 },
+      1: { cellWidth: 60 },
+      2: { cellWidth: 30 },
+      3: { cellWidth: 15 },
+      4: { cellWidth: 30 },
+      5: { cellWidth: 25, halign: "right" }
+    }
+  });
+
+  applyFooter(doc, userEmail);
+  doc.save(`fatura_${card.nome.replace(/\s+/g, "_")}_${invoice.competencia}.pdf`);
 }

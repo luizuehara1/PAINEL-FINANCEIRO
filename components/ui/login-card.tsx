@@ -169,11 +169,18 @@ export default function LoginCard() {
         window.dispatchEvent(new PopStateEvent("popstate"));
       }, 1000);
     } catch (error: any) {
-      console.error(error);
+      const isPopupClosed = error.code === "auth/popup-closed-by-user" || 
+                            error.message?.includes("popup-closed-by-user") ||
+                            error.message?.includes("auth/popup-closed-by-user");
+      
+      if (!isPopupClosed) {
+        console.error(error);
+      }
+      
       if (error.code === "auth/unauthorized-domain" || (error.message && error.message.includes("unauthorized-domain"))) {
         setUnauthorizedDomain(window.location.hostname);
         addToast("error", "Erro: Domínio não autorizado no Firebase. Veja as instruções abaixo.");
-      } else if (error.code !== "auth/popup-closed-by-user") {
+      } else if (!isPopupClosed) {
         addToast("error", "Erro ao fazer login com o Google: " + (error.message || error.code || error));
       }
     } finally {

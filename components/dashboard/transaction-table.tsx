@@ -120,6 +120,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
                 <th className="py-3 px-4">Pagamento</th>
                 <th className="py-3 px-4">Valor</th>
                 <th className="py-3 px-4">Nota</th>
+                <th className="py-3 px-4">Origem</th>
                 <th className="py-3 px-4">Criado por</th>
                 <th className="py-3 px-4 text-right">Ações</th>
               </tr>
@@ -152,7 +153,14 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
 
                   {/* Nome */}
                   <td className="py-3.5 px-4 font-semibold text-white whitespace-nowrap">
-                    {t.nome}
+                    <div className="flex items-center gap-1.5">
+                      <span>{t.nome}</span>
+                      {t.origem === "despesa" && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/20 uppercase font-mono">
+                          Automático
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Categoria */}
@@ -189,6 +197,19 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
                       </button>
                     ) : (
                       <span className="text-zinc-600 text-xs font-mono">Sem nota</span>
+                    )}
+                  </td>
+
+                  {/* Origem */}
+                  <td className="py-3.5 px-4 whitespace-nowrap">
+                    {t.origem === "despesa" ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        Despesa
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-800 text-zinc-400 border border-white/5">
+                        Manual
+                      </span>
                     )}
                   </td>
 

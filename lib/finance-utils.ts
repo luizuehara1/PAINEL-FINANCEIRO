@@ -153,6 +153,30 @@ export async function confirmFixedExpensePayment(
     atualizadoEm: new Date().toISOString(),
   });
 
+  // Check if this is a card installment and if it's the last pending installment in the group
+  if (expense.parcelado && expense.grupoParcelamentoId) {
+    const siblingInstallments = expenses.filter(
+      (e) => e.grupoParcelamentoId === expense.grupoParcelamentoId && e.id !== expenseId
+    );
+    const allOthersPaid = siblingInstallments.every((e) => e.status === "pago");
+    if (allOthersPaid) {
+      const batch = writeBatch(db);
+      const groupDocs = expenses.filter((e) => e.grupoParcelamentoId === expense.grupoParcelamentoId);
+      const quitadoEmDate = new Date().toISOString();
+      for (const d of groupDocs) {
+        const dRef = doc(db, "financeiro", "geral", "despesas", d.id);
+        batch.update(dRef, {
+          parcelamentoQuitado: true,
+          quitadoEm: quitadoEmDate,
+          baixadaCompletamente: true, // Auto-close/quit despesa fixa when fully paid
+          atualizadoEm: quitadoEmDate,
+        });
+      }
+      await batch.commit();
+      console.log("Grupo de parcelamento quitado e baixado automaticamente!");
+    }
+  }
+
   // 2. If it is an active recurring expense that hasn't been completely closed, trigger next month creation
   if (
     expense.tipo === "fixa" &&

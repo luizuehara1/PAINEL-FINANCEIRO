@@ -8,6 +8,7 @@ import { db } from "@/lib/firebase";
 import { Expense, FinanceCategory, PaymentMethod } from "@/types/finance";
 import FileUpload from "./file-upload";
 import { uploadToCloudinary } from "@/lib/cloudinary";
+import { generateInstallmentDates, calculateInstallmentValues } from "@/lib/installment-utils";
 
 interface ExpenseFormProps {
   isOpen: boolean;
@@ -37,6 +38,10 @@ export default function ExpenseForm({
   // Recurrence states
   const [recorrente, setRecorrente] = useState(true);
   const [diaVencimento, setDiaVencimento] = useState<number | "">("");
+
+  // Installment states
+  const [parcelado, setParcelado] = useState(false);
+  const [totalParcelas, setTotalParcelas] = useState<number>(12);
 
   // DB States
   const [dbCategoriasFixas, setDbCategoriasFixas] = useState<FinanceCategory[]>([]);
@@ -133,6 +138,8 @@ export default function ExpenseForm({
       setCategoria(editingExpense.categoria);
       setRecorrente(editingExpense.recorrente ?? false);
       setDiaVencimento(editingExpense.diaVencimento ?? "");
+      setParcelado(editingExpense.parcelado ?? false);
+      setTotalParcelas(editingExpense.totalParcelas ?? 12);
 
       setExistingNoteUrl(editingExpense.notaUrl || null);
       setExistingNoteName(editingExpense.notaNome || null);
@@ -150,6 +157,8 @@ export default function ExpenseForm({
       setStatus("pendente");
       setRecorrente(true);
       setDiaVencimento(new Date().getDate());
+      setParcelado(false);
+      setTotalParcelas(12);
 
       setExistingNoteUrl(null);
       setExistingNoteName(null);
@@ -199,6 +208,15 @@ export default function ExpenseForm({
     }
   }, [dbFormasPagamento, editingExpense, formaPagamento]);
 
+  const isCardSelected = formaPagamento.toLowerCase() === "cartão de crédito";
+  const showInstallments = tipo === "fixa" && isCardSelected;
+
+  useEffect(() => {
+    if (showInstallments && parcelado) {
+      setRecorrente(false);
+    }
+  }, [showInstallments, parcelado]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nome || !valor || !categoria || !formaPagamento) {
@@ -238,6 +256,8 @@ export default function ExpenseForm({
         categoria,
         id: editingExpense?.id,
         pagoEm: status === "pago" ? (editingExpense?.pagoEm || new Date().toISOString().split("T")[0]) : undefined,
+        transacaoGeradaId: editingExpense?.transacaoGeradaId || null,
+        saidaGerada: editingExpense?.saidaGerada ?? false,
         recorrente: tipo === "fixa" ? recorrente : false,
         recorrenciaAtiva: tipo === "fixa" ? (editingExpense?.id ? (editingExpense.recorrenciaAtiva ?? recorrente) : recorrente) : false,
         diaVencimento: tipo === "fixa" && diaVencimento !== "" ? Number(diaVencimento) : undefined,
@@ -250,6 +270,14 @@ export default function ExpenseForm({
         notaPublicId: finalNotaPublicId,
         notaTipo: finalNotaTipo,
         notaNome: finalNotaName,
+        
+        // Installment fields
+        parcelado: showInstallments ? parcelado : false,
+        totalParcelas: showInstallments && parcelado ? totalParcelas : undefined,
+        valorParcela: showInstallments && parcelado ? Number((Number(valor) / totalParcelas).toFixed(2)) : undefined,
+        valorTotalParcelado: showInstallments && parcelado ? Number(valor) : undefined,
+        parcelamentoAtivo: showInstallments && parcelado ? true : undefined,
+        parcelamentoQuitado: showInstallments && parcelado ? false : undefined,
       });
       onClose();
     } catch (error: any) {
@@ -442,43 +470,186 @@ export default function ExpenseForm({
                   )}
                 </div>
 
-                {/* Recorrência Inteligente para Despesas Fixas */}
-                {tipo === "fixa" && (
-                  <div className="p-4 rounded-2xl bg-zinc-900/50 border border-white/5 space-y-4">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        id="recorrente"
-                        checked={recorrente}
-                        onChange={(e) => setRecorrente(e.target.checked)}
-                        className="w-4 h-4 rounded bg-zinc-950 border-zinc-800 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                      />
-                      <label htmlFor="recorrente" className="text-xs font-semibold text-zinc-200 cursor-pointer select-none">
-                        Repetir todos os meses (Recorrência Inteligente)
-                      </label>
+                {/* Parcelamento no cartão */}
+                {showInstallments && (
+                  <div className="p-4 rounded-2xl bg-zinc-900 border border-purple-500/20 shadow-lg shadow-purple-500/5 space-y-4">
+                    <div className="flex items-center gap-2 border-b border-white/5 pb-2">
+                      <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
+                      <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider">
+                        Parcelamento no Cartão
+                      </h4>
                     </div>
 
-                    {recorrente && (
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-zinc-300">
-                          Dia de vencimento <span className="text-emerald-400">*</span>
-                        </label>
-                        <input
-                          type="number"
-                          min="1"
-                          max="31"
-                          required={recorrente}
-                          value={diaVencimento}
-                          onChange={(e) => setDiaVencimento(e.target.value === "" ? "" : Number(e.target.value))}
-                          placeholder="Ex: 10"
-                          className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 outline-none transition-all focus:ring-1 focus:ring-emerald-500/10 font-mono"
-                        />
-                        <p className="text-[10px] text-zinc-500">
-                          Uma nova despesa pendente para o mês seguinte será criada automaticamente ao liquidar este pagamento.
-                        </p>
+                    {editingExpense ? (
+                      <div className="text-xs text-zinc-400 leading-relaxed py-1">
+                        Esta despesa faz parte de um parcelamento (Parcela {editingExpense.parcelaAtual || 1}/{editingExpense.totalParcelas || 12}). Alterações de valores nesta tela afetarão apenas esta parcela.
                       </div>
+                    ) : (
+                      <>
+                        {/* Tipo de pagamento selection */}
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-zinc-300">Tipo de Pagamento</label>
+                          <div className="grid grid-cols-2 gap-3 p-1 rounded-xl bg-zinc-950 border border-white/5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setParcelado(false);
+                              }}
+                              className={`py-1.5 px-3 rounded-lg font-semibold text-xs transition-all cursor-pointer ${
+                                !parcelado
+                                  ? "bg-zinc-800 text-white"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                              }`}
+                            >
+                              À vista
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setParcelado(true);
+                                setRecorrente(false); // Force recurrente to false
+                              }}
+                              className={`py-1.5 px-3 rounded-lg font-semibold text-xs transition-all cursor-pointer ${
+                                parcelado
+                                  ? "bg-purple-500 text-white"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                              }`}
+                            >
+                              Parcelado
+                            </button>
+                          </div>
+                        </div>
+
+                        {parcelado && (
+                          <div className="space-y-4">
+                            {/* Quantidade de parcelas input */}
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-semibold text-zinc-300">
+                                Quantidade de parcelas <span className="text-emerald-400">*</span>
+                              </label>
+                              <input
+                                type="number"
+                                min="2"
+                                max="48"
+                                required={parcelado}
+                                value={totalParcelas}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value);
+                                  setTotalParcelas(val < 2 ? 2 : val);
+                                }}
+                                className="w-full bg-zinc-950 border border-zinc-800 focus:border-purple-500/50 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 outline-none transition-all font-mono"
+                              />
+                            </div>
+
+                            {/* Calculations review */}
+                            {(() => {
+                              const valTotal = Number(valor) || 0;
+                              const valParcela = totalParcelas > 0 ? valTotal / totalParcelas : 0;
+                              const dates = generateInstallmentDates(dataVencimento, totalParcelas);
+                              const ultimaData = dates.length > 0 ? dates[dates.length - 1] : "";
+                              
+                              const formatBRDate = (dStr: string) => {
+                                if (!dStr) return "";
+                                const parts = dStr.split("-");
+                                return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dStr;
+                              };
+
+                              return (
+                                <div className="p-3.5 rounded-xl bg-zinc-950 border border-white/5 space-y-2">
+                                  <div className="flex justify-between text-xs">
+                                    <span className="text-zinc-400">Resumo:</span>
+                                    <span className="font-bold text-white font-mono">
+                                      {totalParcelas} x R$ {valParcela.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between text-xs">
+                                    <span className="text-zinc-400">Valor Total:</span>
+                                    <span className="font-bold text-purple-400 font-mono">
+                                      R$ {valTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between text-xs">
+                                    <span className="text-zinc-400">Primeiro vencimento:</span>
+                                    <span className="text-zinc-300 font-mono">
+                                      {formatBRDate(dataVencimento)}
+                                    </span>
+                                  </div>
+                                  {ultimaData && (
+                                    <div className="flex justify-between text-xs">
+                                      <span className="text-zinc-400">Última parcela:</span>
+                                      <span className="text-purple-300 font-mono font-bold">
+                                        {formatBRDate(ultimaData)}
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {/* Preview list */}
+                                  <div className="mt-3 pt-3 border-t border-white/5 space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                                    <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Prévia das parcelas</p>
+                                    {dates.map((date, idx) => {
+                                      const vals = calculateInstallmentValues(valTotal, totalParcelas);
+                                      return (
+                                        <div key={idx} className="flex justify-between text-[11px] text-zinc-400 font-mono bg-zinc-900/40 px-2 py-1 rounded">
+                                          <span>Parcela {idx + 1}/{totalParcelas}</span>
+                                          <span>R$ {vals[idx]?.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                          <span>{formatBRDate(date)}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
+                )}
+
+                {/* Recorrência Inteligente para Despesas Fixas */}
+                {tipo === "fixa" && (
+                  showInstallments && parcelado ? (
+                    <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 leading-relaxed">
+                      Despesas parceladas no cartão já serão distribuídas conforme a quantidade de parcelas. A recorrência mensal infinita será desativada.
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-zinc-900/50 border border-white/5 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          id="recorrente"
+                          checked={recorrente}
+                          onChange={(e) => setRecorrente(e.target.checked)}
+                          className="w-4 h-4 rounded bg-zinc-950 border-zinc-800 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                        />
+                        <label htmlFor="recorrente" className="text-xs font-semibold text-zinc-200 cursor-pointer select-none">
+                          Repetir todos os meses (Recorrência Inteligente)
+                        </label>
+                      </div>
+
+                      {recorrente && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-zinc-300">
+                            Dia de vencimento <span className="text-emerald-400">*</span>
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            required={recorrente}
+                            value={diaVencimento}
+                            onChange={(e) => setDiaVencimento(e.target.value === "" ? "" : Number(e.target.value))}
+                            placeholder="Ex: 10"
+                            className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 outline-none transition-all focus:ring-1 focus:ring-emerald-500/10 font-mono"
+                          />
+                          <p className="text-[10px] text-zinc-500">
+                            Uma nova despesa pendente para o mês seguinte será criada automaticamente ao liquidar este pagamento.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )
                 )}
 
                 {/* Categoria & Forma de Pagamento */}

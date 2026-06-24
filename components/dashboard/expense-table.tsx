@@ -23,6 +23,7 @@ interface ExpenseTableProps {
   onDelete: (id: string) => void;
   onConfirmPaid: (id: string) => void;
   onCloseRecurring: (id: string, motivo: string) => void;
+  onCancelPayment?: (id: string) => void;
 }
 
 export default function ExpenseTable({ 
@@ -30,7 +31,8 @@ export default function ExpenseTable({
   onEdit, 
   onDelete, 
   onConfirmPaid,
-  onCloseRecurring
+  onCloseRecurring,
+  onCancelPayment
 }: ExpenseTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<"todas" | "fixa" | "variavel">("todas");
@@ -233,7 +235,19 @@ export default function ExpenseTable({
                     {/* Nome */}
                     <td className="py-3.5 px-4 font-semibold text-white whitespace-nowrap">
                       <div>
-                        <span>{e.nome}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{e.nome}</span>
+                          {e.origem === "cartao" && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-[9px] font-bold text-purple-400 font-mono" title="Lançamento importado de fatura de cartão de crédito">
+                              CARTÃO
+                            </span>
+                          )}
+                          {e.parcelado && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-purple-500/20 border border-purple-500/30 text-[9px] font-bold text-purple-300 font-mono" title="Despesa parcelada no cartão de crédito">
+                              PARCELA {e.parcelaAtual}/{e.totalParcelas}
+                            </span>
+                          )}
+                        </div>
                         {e.baixadaCompletamente && e.motivoBaixa && (
                           <p className="text-[10px] text-zinc-500 font-normal italic mt-0.5">
                             Motivo baixa: {e.motivoBaixa}
@@ -330,6 +344,21 @@ export default function ExpenseTable({
                             title="Confirmar pagamento"
                           >
                             <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          </button>
+                        )}
+
+                        {/* Desfazer pagamento */}
+                        {e.status === "pago" && !e.baixadaCompletamente && onCancelPayment && (
+                          <button
+                            type="button"
+                            onClick={(eBtn) => {
+                              eBtn.stopPropagation();
+                              onCancelPayment(e.id);
+                            }}
+                            className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/20 hover:border-amber-400 transition-all cursor-pointer"
+                            title="Desfazer pagamento"
+                          >
+                            <X className="w-3.5 h-3.5 stroke-[2.5]" />
                           </button>
                         )}
 
