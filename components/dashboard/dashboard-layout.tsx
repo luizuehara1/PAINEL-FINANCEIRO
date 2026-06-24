@@ -27,7 +27,8 @@ import {
   Settings,
   FileText,
   Trash2,
-  CreditCard
+  CreditCard,
+  Wallet
 } from "lucide-react";
 import {
   exportTransactionsPDF,
@@ -79,6 +80,7 @@ import ExpenseTable from "./expense-table";
 import ReportsSection from "./reports-section";
 import SettingsSection from "./settings-section";
 import CardExpensesSection from "./card-expenses-section";
+import { ApplicationsSection } from "./applications-section";
 
 // Helper functions for date & timestamp conversion
 function stringToTimestamp(dateStr: string): Timestamp {
@@ -101,7 +103,7 @@ function parseTimestampToString(val: any): string {
   return "";
 }
 
-type ActiveSection = "overview" | "transactions" | "fixed-expenses" | "variable-expenses" | "reports" | "registrations" | "card-expenses";
+type ActiveSection = "overview" | "transactions" | "fixed-expenses" | "variable-expenses" | "reports" | "registrations" | "card-expenses" | "applications";
 
 export default function DashboardLayout() {
   const [activeTab, setActiveTab] = useState<ActiveSection>("overview");
@@ -1106,6 +1108,7 @@ export default function DashboardLayout() {
     { id: "reports", label: "Relatórios de BI", icon: BarChart3 },
     { id: "registrations", label: "Cadastros", icon: Settings },
     { id: "card-expenses", label: "Despesas Cartão", icon: CreditCard },
+    { id: "applications", label: "Aplicações", icon: Wallet },
   ];
 
   if (authLoading) {
@@ -1365,6 +1368,7 @@ export default function DashboardLayout() {
                 {activeTab === "reports" && "Relatórios de BI"}
                 {activeTab === "registrations" && "Cadastros do Sistema"}
                 {activeTab === "card-expenses" && "Despesas Cartão"}
+                {activeTab === "applications" && "Aplicações"}
               </h1>
               <p className="hidden sm:block text-xs text-zinc-500 mt-0.5">
                 Dados reais carregados do Firebase Firestore de forma segura.
@@ -1380,7 +1384,7 @@ export default function DashboardLayout() {
 
             {/* Quick Action buttons */}
             <div className="flex gap-2">
-              {activeTab !== "registrations" && activeTab !== "card-expenses" && (
+              {activeTab !== "registrations" && activeTab !== "card-expenses" && activeTab !== "applications" && (
                 <button
                   id="btn-exportar-pdf"
                   onClick={handleExportPDF}
@@ -2190,6 +2194,13 @@ export default function DashboardLayout() {
           {/* 7. CARD EXPENSES SECTION */}
           {activeTab === "card-expenses" && (
             <CardExpensesSection 
+              userEmail={currentUser?.email || ""}
+            />
+          )}
+
+          {/* 8. APPLICATIONS SECTION */}
+          {activeTab === "applications" && (
+            <ApplicationsSection 
               userEmail={currentUser?.email || ""}
             />
           )}

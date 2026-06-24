@@ -197,3 +197,58 @@ export interface ImportInvoiceResult {
   };
   items: ParsedCardItem[];
 }
+
+export interface BankAccount {
+  id: string;
+  nome: string;
+  tipoConta: "corrente" | "poupanca" | "caixa" | "carteira" | "outro";
+  banco: string;
+  saldoAtual: number;
+  descricao?: string;
+  ativo: boolean;
+  criadoEm?: any;
+  atualizadoEm?: any;
+  criadoPorEmail?: string;
+}
+
+export interface Investment {
+  id: string;
+  nome: string;
+  tipoInvestimento: "renda_fixa" | "renda_variavel" | "tesouro" | "acoes" | "fii" | "cripto" | "fundo" | "outro";
+  instituicao: string;
+  valorAtual: number;
+  valorInicial: number;
+  dataAplicacao: any;
+  rentabilidade?: number | null;
+  descricao?: string;
+  ativo: boolean;
+  criadoEm?: any;
+  atualizadoEm?: any;
+  criadoPorEmail?: string;
+}
+
+export interface Asset {
+  id: string;
+  nome: string;
+  tipoPatrimonio: "casa" | "apartamento" | "carro" | "moto" | "terreno" | "empresa" | "equipamento" | "outro";
+  valorEstimado: number;
+  dataAquisicao?: any | null;
+  descricao?: string;
+  ativo: boolean;
+  criadoEm?: any;
+  atualizadoEm?: any;
+  criadoPorEmail?: string;
+}
+
+export interface InvestmentMovement {
+  id: string;
+  investimentoId: string;
+  tipo: "aporte" | "resgate";
+  valor: number;
+  data: any;
+  bancoDestinoId?: string | null;
+  descricao?: string;
+  criadoEm?: any;
+  criadoPorEmail?: string;
+}
+

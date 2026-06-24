@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Transaction, Expense, CardInvoice, CardItem, CreditCard } from "@/types/finance";
+import { Transaction, Expense, CardInvoice, CardItem, CreditCard, BankAccount, Investment, Asset } from "@/types/finance";
 
 export function formatCurrencyBRL(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -703,3 +703,141 @@ export function exportCardInvoicePDF(
   applyFooter(doc, userEmail);
   doc.save(`fatura_${card.nome.replace(/\s+/g, "_")}_${invoice.competencia}.pdf`);
 }
+
+export function exportApplicationsPDF(
+  banks: BankAccount[],
+  investments: Investment[],
+  assets: Asset[],
+  userEmail: string
+) {
+  const doc = new jsPDF();
+  applyStyles(doc, "Relatório de Aplicações e Patrimônio", "Aplicações Financeiras, Investimentos e Bens", userEmail);
+
+  // Calculations
+  const totalBancos = banks.filter(b => b.ativo).reduce((sum, b) => sum + b.saldoAtual, 0);
+  const totalInvestimentos = investments.filter(i => i.ativo).reduce((sum, i) => sum + i.valorAtual, 0);
+  const totalPatrimonios = assets.filter(a => a.ativo).reduce((sum, a) => sum + a.valorEstimado, 0);
+  const consolidado = totalBancos + totalInvestimentos + totalPatrimonios;
+
+  // Render Consolidated Cards (4 cards)
+  doc.setFillColor(244, 244, 245);
+  doc.roundedRect(14, 45, 42, 18, 2, 2, "F");
+  doc.roundedRect(61, 45, 42, 18, 2, 2, "F");
+  doc.roundedRect(108, 45, 42, 18, 2, 2, "F");
+  doc.roundedRect(155, 45, 42, 18, 2, 2, "F");
+
+  doc.setFontSize(7);
+  doc.setTextColor(113, 113, 122);
+  doc.text("TOTAL EM BANCOS", 17, 50);
+  doc.text("TOTAL INVESTIDO", 64, 50);
+  doc.text("PATRIMÔNIO EM BENS", 111, 50);
+  doc.text("CONSOLIDADO TOTAL", 158, 50);
+
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(16, 185, 129);
+  doc.text(formatCurrencyBRL(totalBancos), 17, 58);
+  doc.setTextColor(59, 130, 246);
+  doc.text(formatCurrencyBRL(totalInvestimentos), 64, 58);
+  doc.setTextColor(245, 158, 11);
+  doc.text(formatCurrencyBRL(totalPatrimonios), 111, 58);
+  doc.setTextColor(16, 185, 129);
+  doc.text(formatCurrencyBRL(consolidado), 158, 58);
+
+  let currentY = 72;
+
+  // Table 1: Contas Bancárias
+  doc.setTextColor(24, 24, 27);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.text("1. Contas Bancárias e Caixas:", 14, currentY);
+
+  const banksBody = banks.length > 0
+    ? banks.map(b => [b.nome, b.banco, b.tipoConta.toUpperCase(), b.ativo ? "ATIVO" : "INATIVO", formatCurrencyBRL(b.saldoAtual)])
+    : [["Nenhuma conta cadastrada.", "", "", "", ""]];
+
+  autoTable(doc, {
+    startY: currentY + 3,
+    head: [["Nome da Conta", "Banco/Inst.", "Tipo", "Status", "Saldo Atual"]],
+    body: banksBody,
+    theme: "striped",
+    headStyles: { fillColor: [18, 18, 20], fontSize: 8 },
+    bodyStyles: { fontSize: 8 },
+    columnStyles: {
+      4: { halign: "right" }
+    }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // Check if we need to add a page
+  if (currentY > 230) {
+    doc.addPage();
+    applyStyles(doc, "Relatório de Aplicações e Patrimônio", "Aplicações Financeiras, Investimentos e Bens (Cont.)", userEmail);
+    currentY = 45;
+  }
+
+  // Table 2: Investimentos
+  doc.setTextColor(24, 24, 27);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.text("2. Carteira de Investimentos:", 14, currentY);
+
+  const invsBody = investments.length > 0
+    ? investments.map(i => [
+        i.nome, 
+        i.instituicao, 
+        i.tipoInvestimento.replace("_", " ").toUpperCase(), 
+        i.ativo ? "ATIVO" : "INATIVO", 
+        formatCurrencyBRL(i.valorInicial), 
+        formatCurrencyBRL(i.valorAtual)
+      ])
+    : [["Nenhum investimento cadastrado.", "", "", "", "", ""]];
+
+  autoTable(doc, {
+    startY: currentY + 3,
+    head: [["Ativo/Nome", "Instituição", "Tipo", "Status", "Vlr Aplicado", "Vlr Atual"]],
+    body: invsBody,
+    theme: "striped",
+    headStyles: { fillColor: [18, 18, 20], fontSize: 8 },
+    bodyStyles: { fontSize: 8 },
+    columnStyles: {
+      4: { halign: "right" },
+      5: { halign: "right" }
+    }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  if (currentY > 230) {
+    doc.addPage();
+    applyStyles(doc, "Relatório de Aplicações e Patrimônio", "Aplicações Financeiras, Investimentos e Bens (Cont.)", userEmail);
+    currentY = 45;
+  }
+
+  // Table 3: Patrimônios e Bens
+  doc.setTextColor(24, 24, 27);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.text("3. Patrimônio e Bens Físicos:", 14, currentY);
+
+  const assetsBody = assets.length > 0
+    ? assets.map(a => [a.nome, a.tipoPatrimonio.toUpperCase(), a.ativo ? "ATIVO" : "INATIVO", formatCurrencyBRL(a.valorEstimado)])
+    : [["Nenhum patrimônio cadastrado.", "", "", ""]];
+
+  autoTable(doc, {
+    startY: currentY + 3,
+    head: [["Nome do Bem", "Tipo de Patrimônio", "Status", "Valor Estimado"]],
+    body: assetsBody,
+    theme: "striped",
+    headStyles: { fillColor: [18, 18, 20], fontSize: 8 },
+    bodyStyles: { fontSize: 8 },
+    columnStyles: {
+      3: { halign: "right" }
+    }
+  });
+
+  applyFooter(doc, userEmail);
+  doc.save(`aplicacoes_patrimonio_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
