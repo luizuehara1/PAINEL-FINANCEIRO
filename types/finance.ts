@@ -70,10 +70,10 @@ export interface Expense {
 
   // Campos de despesa parcelada no cartão
   parcelado?: boolean;
-  parcelaAtual?: number;
-  totalParcelas?: number;
-  valorParcela?: number;
-  valorTotalParcelado?: number;
+  parcelaAtual?: number | null;
+  totalParcelas?: number | null;
+  valorParcela?: number | null;
+  valorTotalParcelado?: number | null;
   grupoParcelamentoId?: string | null;
   parcelamentoAtivo?: boolean;
   parcelamentoQuitado?: boolean;

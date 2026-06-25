@@ -37,13 +37,15 @@ export async function confirmCardInvoicePayment(
     const transRef = doc(collection(db, "financeiro", "geral", "transacoes"));
     transId = transRef.id;
 
+    const amount = Math.abs(invoice.valorTotal || 0);
+
     const transPayload = {
       tipo: "saida" as const,
       nome: `Pagamento fatura - ${invoice.cartaoNome}`,
       descricao: `Pagamento da fatura do cartão ${invoice.cartaoNome} competência ${invoice.competencia}`,
       categoria: "Cartão de Crédito",
-      valor: Number(invoice.valorTotal),
-      formaPagamento: "Cartão de Crédito",
+      valor: amount,
+      formaPagamento: "Débito em conta",
       data: new Date().toISOString().split("T")[0],
       origem: "cartao" as const,
       cartaoId: invoice.cartaoId,

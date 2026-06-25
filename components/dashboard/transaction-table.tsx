@@ -179,7 +179,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
                   <td className={`py-3.5 px-4 font-bold font-mono whitespace-nowrap ${
                     t.tipo === "entrada" ? "text-emerald-400" : "text-red-400"
                   }`}>
-                    {t.tipo === "entrada" ? "+" : "-"} {formatCurrency(t.valor)}
+                    {t.tipo === "entrada" ? "+" : "-"} {formatCurrency(Math.abs(t.valor || 0))}
                   </td>
 
                   {/* Nota */}

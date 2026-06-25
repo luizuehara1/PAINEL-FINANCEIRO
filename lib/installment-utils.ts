@@ -11,6 +11,29 @@ import { db } from "./firebase";
 import { Expense } from "@/types/finance";
 
 /**
+ * Normalizes text to ignore casing, accents and trailing spaces.
+ */
+export function normalizeText(value: string): string {
+  if (!value) return "";
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+/**
+ * Checks if a payment method name corresponds to a credit card.
+ */
+export function isCreditCardPayment(value: string): boolean {
+  const normalized = normalizeText(value);
+  return (
+    normalized.includes("cartao") &&
+    normalized.includes("credito")
+  );
+}
+
+/**
  * Generates dates for installments starting from a start date, incrementing the month.
  */
 export function generateInstallmentDates(startDateStr: string, total: number): string[] {
@@ -76,6 +99,9 @@ export async function generateInstallmentExpenses({
   notaPublicId,
   notaTipo,
   notaNome,
+  imovelId,
+  imovelNome,
+  centroCustoTipo,
 }: {
   nome: string;
   valorTotal: number;
@@ -90,6 +116,9 @@ export async function generateInstallmentExpenses({
   notaPublicId?: string | null;
   notaTipo?: string | null;
   notaNome?: string | null;
+  imovelId?: string | null;
+  imovelNome?: string | null;
+  centroCustoTipo?: "imovel" | null;
 }) {
   const dates = generateInstallmentDates(primeiraDataVencimento, totalParcelas);
   const values = calculateInstallmentValues(valorTotal, totalParcelas);
@@ -134,6 +163,7 @@ export async function generateInstallmentExpenses({
       parcelado: true,
       parcelaAtual: parcelaNum,
       totalParcelas,
+      focusedParcela: false,
       valorParcela,
       valorTotalParcelado: valorTotal,
       grupoParcelamentoId,
@@ -150,6 +180,11 @@ export async function generateInstallmentExpenses({
       notaPublicId: notaPublicId || null,
       notaTipo: notaTipo || null,
       notaNome: notaNome || null,
+
+      // Property cost center fields
+      imovelId: imovelId || null,
+      imovelNome: imovelNome || null,
+      centroCustoTipo: centroCustoTipo || null,
     };
     
     batch.set(docRef, despesaPayload);

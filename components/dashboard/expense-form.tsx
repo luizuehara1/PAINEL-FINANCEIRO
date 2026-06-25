@@ -8,7 +8,13 @@ import { db } from "@/lib/firebase";
 import { Expense, FinanceCategory, PaymentMethod, PropertyCostCenter } from "@/types/finance";
 import FileUpload from "./file-upload";
 import { uploadToCloudinary } from "@/lib/cloudinary";
-import { generateInstallmentDates, calculateInstallmentValues } from "@/lib/installment-utils";
+import { 
+  generateInstallmentDates, 
+  calculateInstallmentValues, 
+  normalizeText, 
+  isCreditCardPayment 
+} from "@/lib/installment-utils";
+import { getCompetenceFromDateStr } from "@/lib/cycle-utils";
 
 interface ExpenseFormProps {
   isOpen: boolean;
@@ -41,7 +47,11 @@ export default function ExpenseForm({
 
   // Installment states
   const [parcelado, setParcelado] = useState(false);
-  const [totalParcelas, setTotalParcelas] = useState<number>(12);
+  const [tipoPagamentoCartao, setTipoPagamentoCartao] = useState<"avista" | "parcelado">("avista");
+  const [quantidadeParcelas, setQuantidadeParcelas] = useState<number>(12);
+  const [valorTotalParcelado, setValorTotalParcelado] = useState<number>(0);
+  const [valorParcela, setValorParcela] = useState<number>(0);
+  const [dataPrimeiraParcela, setDataPrimeiraParcela] = useState<string>("");
 
   // DB States
   const [dbCategoriasFixas, setDbCategoriasFixas] = useState<FinanceCategory[]>([]);
@@ -162,7 +172,11 @@ export default function ExpenseForm({
       setRecorrente(editingExpense.recorrente ?? false);
       setDiaVencimento(editingExpense.diaVencimento ?? "");
       setParcelado(editingExpense.parcelado ?? false);
-      setTotalParcelas(editingExpense.totalParcelas ?? 12);
+      setTipoPagamentoCartao(editingExpense.parcelado ? "parcelado" : "avista");
+      setQuantidadeParcelas(editingExpense.totalParcelas ?? 12);
+      setValorTotalParcelado(editingExpense.valorTotalParcelado ?? (editingExpense.valor || 0));
+      setValorParcela(editingExpense.valorParcela ?? 0);
+      setDataPrimeiraParcela(editingExpense.dataVencimento || "");
 
       setExistingNoteUrl(editingExpense.notaUrl || null);
       setExistingNoteName(editingExpense.notaNome || null);
@@ -182,7 +196,11 @@ export default function ExpenseForm({
       setRecorrente(true);
       setDiaVencimento(new Date().getDate());
       setParcelado(false);
-      setTotalParcelas(12);
+      setTipoPagamentoCartao("avista");
+      setQuantidadeParcelas(12);
+      setValorTotalParcelado(0);
+      setValorParcela(0);
+      setDataPrimeiraParcela(todayStr);
       setSelectedImovelId("");
 
       setExistingNoteUrl(null);
@@ -196,6 +214,7 @@ export default function ExpenseForm({
   // Handle dataVencimento automatic day derivation
   const handleDataVencimentoChange = (val: string) => {
     setDataVencimento(val);
+    setDataPrimeiraParcela(val);
     if (val) {
       const day = Number(val.split("-")[2]);
       if (!isNaN(day) && day >= 1 && day <= 31) {
@@ -233,8 +252,34 @@ export default function ExpenseForm({
     }
   }, [dbFormasPagamento, editingExpense, formaPagamento]);
 
-  const isCardSelected = formaPagamento.toLowerCase() === "cartão de crédito";
+  const isCardSelected = isCreditCardPayment(formaPagamento);
   const showInstallments = tipo === "fixa" && isCardSelected;
+
+  // DEBUG Logs
+  console.log("Forma de pagamento selecionada:", formaPagamento);
+  console.log("Forma normalizada:", normalizeText(formaPagamento));
+  console.log("É cartão de crédito?", isCreditCardPayment(formaPagamento));
+  console.log("Mostrar parcelamento?", showInstallments);
+
+  // Synchronize card installment states whenever values change
+  useEffect(() => {
+    const valTotal = Number(valor) || 0;
+    setValorTotalParcelado(valTotal);
+    if (quantidadeParcelas > 0) {
+      setValorParcela(Number((valTotal / quantidadeParcelas).toFixed(2)));
+    } else {
+      setValorParcela(0);
+    }
+  }, [valor, quantidadeParcelas]);
+
+  // Handle automatic resets when changing to non-card payment
+  useEffect(() => {
+    if (formaPagamento && !isCreditCardPayment(formaPagamento)) {
+      setParcelado(false);
+      setTipoPagamentoCartao("avista");
+      setQuantidadeParcelas(1);
+    }
+  }, [formaPagamento]);
 
   useEffect(() => {
     if (showInstallments && parcelado) {
@@ -288,9 +333,10 @@ export default function ExpenseForm({
         pagoEm: status === "pago" ? (editingExpense?.pagoEm || new Date().toISOString().split("T")[0]) : undefined,
         transacaoGeradaId: editingExpense?.transacaoGeradaId || null,
         saidaGerada: editingExpense?.saidaGerada ?? false,
-        recorrente: tipo === "fixa" ? recorrente : false,
-        recorrenciaAtiva: tipo === "fixa" ? (editingExpense?.id ? (editingExpense.recorrenciaAtiva ?? recorrente) : recorrente) : false,
+        recorrente: tipo === "fixa" ? (showInstallments && parcelado ? false : recorrente) : false,
+        recorrenciaAtiva: tipo === "fixa" ? (showInstallments && parcelado ? false : (editingExpense?.id ? (editingExpense.recorrenciaAtiva ?? recorrente) : recorrente)) : false,
         diaVencimento: tipo === "fixa" && diaVencimento !== "" ? Number(diaVencimento) : undefined,
+        competencia: tipo === "fixa" ? getCompetenceFromDateStr(finalVencimento) : undefined,
         grupoRecorrenciaId: editingExpense?.grupoRecorrenciaId,
         despesaOrigemId: editingExpense?.despesaOrigemId,
         baixadaCompletamente: editingExpense?.baixadaCompletamente,
@@ -306,9 +352,9 @@ export default function ExpenseForm({
         
         // Installment fields
         parcelado: showInstallments ? parcelado : false,
-        totalParcelas: showInstallments && parcelado ? totalParcelas : undefined,
-        valorParcela: showInstallments && parcelado ? Number((Number(valor) / totalParcelas).toFixed(2)) : undefined,
-        valorTotalParcelado: showInstallments && parcelado ? Number(valor) : undefined,
+        totalParcelas: showInstallments && parcelado ? quantidadeParcelas : undefined,
+        valorParcela: showInstallments && parcelado ? valorParcela : undefined,
+        valorTotalParcelado: showInstallments && parcelado ? valorTotalParcelado : undefined,
         parcelamentoAtivo: showInstallments && parcelado ? true : undefined,
         parcelamentoQuitado: showInstallments && parcelado ? false : undefined,
       });
@@ -565,10 +611,10 @@ export default function ExpenseForm({
                                 min="2"
                                 max="48"
                                 required={parcelado}
-                                value={totalParcelas}
+                                value={quantidadeParcelas}
                                 onChange={(e) => {
                                   const val = Number(e.target.value);
-                                  setTotalParcelas(val < 2 ? 2 : val);
+                                  setQuantidadeParcelas(val < 2 ? 2 : val);
                                 }}
                                 className="w-full bg-zinc-950 border border-zinc-800 focus:border-purple-500/50 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 outline-none transition-all font-mono"
                               />
@@ -577,8 +623,8 @@ export default function ExpenseForm({
                             {/* Calculations review */}
                             {(() => {
                               const valTotal = Number(valor) || 0;
-                              const valParcela = totalParcelas > 0 ? valTotal / totalParcelas : 0;
-                              const dates = generateInstallmentDates(dataVencimento, totalParcelas);
+                              const valParcela = quantidadeParcelas > 0 ? valTotal / quantidadeParcelas : 0;
+                              const dates = generateInstallmentDates(dataPrimeiraParcela || dataVencimento, quantidadeParcelas);
                               const ultimaData = dates.length > 0 ? dates[dates.length - 1] : "";
                               
                               const formatBRDate = (dStr: string) => {
@@ -590,27 +636,31 @@ export default function ExpenseForm({
                               return (
                                 <div className="p-3.5 rounded-xl bg-zinc-950 border border-white/5 space-y-2">
                                   <div className="flex justify-between text-xs">
-                                    <span className="text-zinc-400">Resumo:</span>
+                                    <span className="text-zinc-400">Quantidade de parcelas:</span>
+                                    <span className="font-bold text-white font-mono">{quantidadeParcelas}</span>
+                                  </div>
+                                  <div className="flex justify-between text-xs">
+                                    <span className="text-zinc-400">Valor total:</span>
                                     <span className="font-bold text-white font-mono">
-                                      {totalParcelas} x R$ {valParcela.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      R$ {valorTotalParcelado.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </span>
                                   </div>
                                   <div className="flex justify-between text-xs">
-                                    <span className="text-zinc-400">Valor Total:</span>
+                                    <span className="text-zinc-400">Valor da parcela:</span>
                                     <span className="font-bold text-purple-400 font-mono">
-                                      R$ {valTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      R$ {valorParcela.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </span>
                                   </div>
                                   <div className="flex justify-between text-xs">
-                                    <span className="text-zinc-400">Primeiro vencimento:</span>
+                                    <span className="text-zinc-400">Data da primeira parcela (Vencimento):</span>
                                     <span className="text-zinc-300 font-mono">
-                                      {formatBRDate(dataVencimento)}
+                                      {formatBRDate(dataPrimeiraParcela || dataVencimento)}
                                     </span>
                                   </div>
                                   {ultimaData && (
                                     <div className="flex justify-between text-xs">
                                       <span className="text-zinc-400">Última parcela:</span>
-                                      <span className="text-purple-300 font-mono font-bold">
+                                      <span className="text-purple-300 font-mono">
                                         {formatBRDate(ultimaData)}
                                       </span>
                                     </div>
@@ -620,12 +670,10 @@ export default function ExpenseForm({
                                   <div className="mt-3 pt-3 border-t border-white/5 space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
                                     <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Prévia das parcelas</p>
                                     {dates.map((date, idx) => {
-                                      const vals = calculateInstallmentValues(valTotal, totalParcelas);
+                                      const vals = calculateInstallmentValues(valTotal, quantidadeParcelas);
                                       return (
                                         <div key={idx} className="flex justify-between text-[11px] text-zinc-400 font-mono bg-zinc-900/40 px-2 py-1 rounded">
-                                          <span>Parcela {idx + 1}/{totalParcelas}</span>
-                                          <span>R$ {vals[idx]?.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                          <span>{formatBRDate(date)}</span>
+                                          <span>{idx + 1}/{quantidadeParcelas} - R$ {vals[idx]?.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} - {formatBRDate(date)}</span>
                                         </div>
                                       );
                                     })}
@@ -644,7 +692,7 @@ export default function ExpenseForm({
                 {tipo === "fixa" && (
                   showInstallments && parcelado ? (
                     <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 leading-relaxed">
-                      Despesas parceladas no cartão já serão distribuídas conforme a quantidade de parcelas. A recorrência mensal infinita será desativada.
+                      Despesas parceladas no cartão já serão distribuídas conforme o número de parcelas. A recorrência mensal será desativada.
                     </div>
                   ) : (
                     <div className="p-4 rounded-2xl bg-zinc-900/50 border border-white/5 space-y-4">

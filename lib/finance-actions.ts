@@ -231,6 +231,9 @@ export async function updateLinkedExpenseTransaction(expense: Expense): Promise<
       notaPublicId: expense.notaPublicId || null,
       notaTipo: expense.notaTipo || null,
       notaNome: expense.notaNome || null,
+      imovelId: expense.imovelId || null,
+      imovelNome: expense.imovelNome || null,
+      centroCustoTipo: expense.centroCustoTipo || null,
       atualizadoEm: new Date().toISOString(),
     });
   }

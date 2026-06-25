@@ -72,7 +72,9 @@ import {
 } from "@/lib/finance-actions";
 import { 
   generateInstallmentExpenses, 
-  deleteInstallmentGroup 
+  deleteInstallmentGroup,
+  isCreditCardPayment,
+  normalizeText
 } from "@/lib/installment-utils";
 import {
   applyTransactionToBank,
@@ -90,6 +92,17 @@ import SettingsSection from "./settings-section";
 import CardExpensesSection from "./card-expenses-section";
 import { ApplicationsSection } from "./applications-section";
 import { ConfirmDialog } from "./confirm-dialog";
+import { generateFutureRecurringExpenses } from "@/lib/recurring-expense-utils";
+import { 
+  filterFixedExpensesByPeriod, 
+  calculateFixedExpenseTotals,
+  getDateRangeFromPeriodFilter
+} from "@/lib/finance-calculations";
+import {
+  getAvailableCyclesFromExpenses,
+  getCompetenceFromDateStr,
+  formatCompetenceLabel
+} from "@/lib/cycle-utils";
 
 // Helper functions for date & timestamp conversion
 function stringToTimestamp(dateStr: string): Timestamp {
@@ -227,6 +240,8 @@ export default function DashboardLayout() {
   const [fixedCategory, setFixedCategory] = useState("todas");
   const [fixedPaymentMethod, setFixedPaymentMethod] = useState("todos");
   const [fixedRecurrenceFilter, setFixedRecurrenceFilter] = useState<"todos" | "ativas" | "baixadas" | "nao-recorrentes">("todos");
+  const [fixedPeriodFilter, setFixedPeriodFilter] = useState<"este_mes" | "proximo_mes" | "proximos_3_meses" | "proximos_6_meses" | "este_ano" | "todas_futuras" | "personalizado">("este_mes");
+  const [fixedParcelamentoFilter, setFixedParcelamentoFilter] = useState<"todos" | "a_vista" | "parcelado" | "em_andamento" | "quitado">("todos");
 
   // 3. Variable Expenses Filters
   const [variableDateStart, setVariableDateStart] = useState("");
@@ -471,6 +486,13 @@ export default function DashboardLayout() {
     };
   }, [currentUser]);
 
+  // Auto-generate future recurring expenses up to 12 months ahead to support future views
+  useEffect(() => {
+    if (expenses.length > 0 && currentUser?.email) {
+      generateFutureRecurringExpenses(expenses, currentUser.email);
+    }
+  }, [expenses.length, currentUser?.email]);
+
   // Filters calculation
   // 1. Transactions filtered
   const filteredTransactions = transactions.filter((t) => {
@@ -484,11 +506,39 @@ export default function DashboardLayout() {
   });
 
   // 2. Fixed Expenses filtered
+  const availableCycles = getAvailableCyclesFromExpenses(expenses);
+
   const filteredFixedExpenses = expenses.filter((e) => {
     if (e.tipo !== "fixa") return false;
-    if (selectedMonth && !e.dataVencimento.startsWith(selectedMonth)) return false;
-    if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
-    if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
+
+    // Apply global cycle filter (selectedMonth)
+    if (selectedMonth) {
+      let comp = e.competencia;
+      if (!comp && e.dataVencimento) {
+        comp = getCompetenceFromDateStr(e.dataVencimento);
+      }
+      if (!comp && e.data) {
+        comp = getCompetenceFromDateStr(e.data);
+      }
+      if (comp !== selectedMonth) return false;
+
+      // When a specific cycle is selected, we only apply the period filter if it is personalized
+      if (fixedPeriodFilter === "personalizado") {
+        if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
+        if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
+      }
+    } else {
+      // Apply standard period filter
+      if (fixedPeriodFilter === "personalizado") {
+        if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
+        if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
+      } else {
+        const { start, end } = getDateRangeFromPeriodFilter(fixedPeriodFilter, todayStr);
+        if (start && e.dataVencimento < start) return false;
+        if (end && e.dataVencimento > end) return false;
+      }
+    }
+
     if (fixedStatus !== "todos") {
       if (fixedStatus === "pago") {
         if (e.status !== "pago") return false;
@@ -520,8 +570,27 @@ export default function DashboardLayout() {
         if (e.recorrente) return false;
       }
     }
+
+    // Parcelamento filter
+    if (fixedParcelamentoFilter !== "todos") {
+      if (fixedParcelamentoFilter === "a_vista") {
+        if (e.parcelado) return false;
+      } else if (fixedParcelamentoFilter === "parcelado") {
+        if (!e.parcelado) return false;
+      } else if (fixedParcelamentoFilter === "em_andamento") {
+        if (!e.parcelado || e.parcelamentoAtivo !== true) return false;
+      } else if (fixedParcelamentoFilter === "quitado") {
+        if (!e.parcelado || e.parcelamentoQuitado !== true) return false;
+      }
+    }
     return true;
   });
+
+  // Dynamic cycle debug logs
+  console.log("Despesas fixas carregadas:", expenses.filter(e => e.tipo === "fixa"));
+  console.log("Ciclos disponíveis:", availableCycles);
+  console.log("Ciclo selecionado:", selectedMonth);
+  console.log("Despesas filtradas por ciclo:", filteredFixedExpenses);
 
   // 3. Variable Expenses filtered
   const filteredVariableExpenses = expenses.filter((e) => {
@@ -560,6 +629,8 @@ export default function DashboardLayout() {
     setFixedPaymentMethod("todos");
     setFixedRecurrenceFilter("todos");
     setFixedImovelFilter("todos");
+    setFixedPeriodFilter("este_mes");
+    setFixedParcelamentoFilter("todos");
 
     setVariableDateStart("");
     setVariableDateEnd("");
@@ -596,16 +667,25 @@ export default function DashboardLayout() {
     } 
     else if (activeTab === "fixed-expenses") {
       const parts = [];
-      if (selectedMonth) parts.push(`Ciclo: ${selectedMonth}`);
+      parts.push(`Período: ${
+        fixedPeriodFilter === "este_mes" ? "Este mês" :
+        fixedPeriodFilter === "proximo_mes" ? "Próximo mês" :
+        fixedPeriodFilter === "proximos_3_meses" ? "Próximos 3 meses" :
+        fixedPeriodFilter === "proximos_6_meses" ? "Próximos 6 meses" :
+        fixedPeriodFilter === "este_ano" ? "Este ano" :
+        fixedPeriodFilter === "todas_futuras" ? "Todas futuras" :
+        "Personalizado"
+      }`);
       if (fixedVencimentoStart) parts.push(`Venc. Início: ${formatDateDate(fixedVencimentoStart)}`);
       if (fixedVencimentoEnd) parts.push(`Venc. Fim: ${formatDateDate(fixedVencimentoEnd)}`);
       if (fixedStatus !== "todos") parts.push(`Status: ${fixedStatus}`);
       if (fixedCategory !== "todas") parts.push(`Categoria: ${fixedCategory}`);
       if (fixedPaymentMethod !== "todos") parts.push(`Meio: ${fixedPaymentMethod}`);
       if (fixedRecurrenceFilter !== "todos") parts.push(`Recorrência: ${fixedRecurrenceFilter}`);
+      if (fixedParcelamentoFilter !== "todos") parts.push(`Parcelamento: ${fixedParcelamentoFilter}`);
       const filtersInfo = parts.join(" | ") || "Sem filtros ativos";
       
-      exportFixedExpensesPDF(filteredFixedExpenses, filtersInfo, userEmail);
+      exportFixedExpensesPDF(filteredFixedExpenses, filtersInfo, userEmail, todayStr);
     }
     else if (activeTab === "variable-expenses") {
       const parts = [];
@@ -693,8 +773,8 @@ export default function DashboardLayout() {
   const totalBensAtivos = assets.filter(a => a.ativo).reduce((sum, a) => sum + (a.valorEstimado || 0), 0);
   const patrimonioConsolidado = totalBancosAtivos + totalInvestidoAtivos + totalBensAtivos;
 
-  const totalEntradasAll = transactions.filter(t => t.tipo === "entrada").reduce((sum, t) => sum + t.valor, 0);
-  const totalSaidasAll = transactions.filter(t => t.tipo === "saida").reduce((sum, t) => sum + t.valor, 0);
+  const totalEntradasAll = transactions.filter(t => t.tipo === "entrada").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
+  const totalSaidasAll = transactions.filter(t => t.tipo === "saida").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   const totalDespesasPagasAll = expenses.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
   const saldoAtualAllTime = totalBancosAtivos;
 
@@ -704,8 +784,8 @@ export default function DashboardLayout() {
   const fixedInSelectedMonth = expenses.filter(e => e.tipo === "fixa" && (!selectedMonth || e.dataVencimento.startsWith(selectedMonth)));
   const variableInSelectedMonth = expenses.filter(e => e.tipo === "variavel" && (!selectedMonth || e.data.startsWith(selectedMonth)));
 
-  const totalEntradasMonth = entriesInSelectedMonth.reduce((sum, t) => sum + t.valor, 0);
-  const totalSaidasMonth = exitsInSelectedMonth.reduce((sum, t) => sum + t.valor, 0);
+  const totalEntradasMonth = entriesInSelectedMonth.reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
+  const totalSaidasMonth = exitsInSelectedMonth.reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   const totalDespesasFixasMonth = fixedInSelectedMonth.reduce((sum, e) => sum + e.valor, 0);
   const totalDespesasVariaveisMonth = variableInSelectedMonth.reduce((sum, e) => sum + e.valor, 0);
 
@@ -735,6 +815,7 @@ export default function DashboardLayout() {
   // Transaction CRUD Actions
   const handleTransactionSubmit = async (data: Omit<Transaction, "id" | "criadoEm"> & { id?: string }) => {
     const userEmail = currentUser?.email || "";
+    const safeValor = Math.abs(data.valor || 0);
     try {
       if (data.id) {
         const originalTx = transactions.find(t => t.id === data.id);
@@ -744,7 +825,7 @@ export default function DashboardLayout() {
           nome: data.nome,
           descricao: data.descricao || "",
           categoria: data.categoria,
-          valor: data.valor,
+          valor: safeValor,
           formaPagamento: data.formaPagamento,
           data: data.data,
           bancoId: data.bancoId || null,
@@ -766,7 +847,7 @@ export default function DashboardLayout() {
           nome: data.nome,
           descricao: data.descricao,
           categoria: data.categoria,
-          valor: data.valor,
+          valor: safeValor,
           formaPagamento: data.formaPagamento,
           data: stringToTimestamp(data.data),
           bancoId: data.bancoId || null,
@@ -785,7 +866,7 @@ export default function DashboardLayout() {
           nome: data.nome,
           descricao: data.descricao || "",
           categoria: data.categoria,
-          valor: data.valor,
+          valor: safeValor,
           formaPagamento: data.formaPagamento,
           data: data.data,
           bancoId: data.bancoId || null,
@@ -802,7 +883,7 @@ export default function DashboardLayout() {
           nome: data.nome,
           descricao: data.descricao,
           categoria: data.categoria,
-          valor: data.valor,
+          valor: safeValor,
           formaPagamento: data.formaPagamento,
           data: stringToTimestamp(data.data),
           bancoId: data.bancoId || null,
@@ -870,6 +951,9 @@ export default function DashboardLayout() {
             notaNome: data.notaNome || null,
             transacaoGeradaId: data.transacaoGeradaId || null,
             saidaGerada: data.saidaGerada ?? false,
+            imovelId: data.imovelId || null,
+            imovelNome: data.imovelNome || null,
+            centroCustoTipo: data.centroCustoTipo || null,
           };
 
           if (data.tipo === "fixa") {
@@ -944,7 +1028,7 @@ export default function DashboardLayout() {
         // Mode: CREATE
         const colRef = collection(db, "financeiro", "geral", "despesas");
         
-        if (data.tipo === "fixa" && data.formaPagamento.toLowerCase() === "cartão de crédito" && data.parcelado) {
+        if (data.tipo === "fixa" && isCreditCardPayment(data.formaPagamento) && data.parcelado) {
           await generateInstallmentExpenses({
             nome: data.nome,
             valorTotal: data.valor,
@@ -958,6 +1042,9 @@ export default function DashboardLayout() {
             notaPublicId: data.notaPublicId || null,
             notaTipo: data.notaTipo || null,
             notaNome: data.notaNome || null,
+            imovelId: data.imovelId || null,
+            imovelNome: data.imovelNome || null,
+            centroCustoTipo: data.centroCustoTipo || null,
           });
         } else if (data.tipo === "fixa") {
           const competence = getExpenseCompetence(finalVencimento);
@@ -994,6 +1081,11 @@ export default function DashboardLayout() {
             notaPublicId: data.notaPublicId || null,
             notaTipo: data.notaTipo || null,
             notaNome: data.notaNome || null,
+
+            // Property cost center fields
+            imovelId: data.imovelId || null,
+            imovelNome: data.imovelNome || null,
+            centroCustoTipo: data.centroCustoTipo || null,
           });
 
           // If created as "pago", auto-create a transaction
@@ -1044,6 +1136,11 @@ export default function DashboardLayout() {
                 baixadaCompletamente: false,
                 baixadaEm: null,
                 motivoBaixa: null,
+
+                // Property fields for next-month automatic pending expense
+                imovelId: data.imovelId || null,
+                imovelNome: data.imovelNome || null,
+                centroCustoTipo: data.centroCustoTipo || null,
               });
             }
           }
@@ -1067,6 +1164,11 @@ export default function DashboardLayout() {
             notaPublicId: data.notaPublicId || null,
             notaTipo: data.notaTipo || null,
             notaNome: data.notaNome || null,
+
+            // Property fields for variable expense
+            imovelId: data.imovelId || null,
+            imovelNome: data.imovelNome || null,
+            centroCustoTipo: data.centroCustoTipo || null,
           });
 
           // If created as "pago", auto-create a transaction
@@ -1259,7 +1361,10 @@ export default function DashboardLayout() {
 
     try {
       const userEmail = currentUser?.email || "";
-      await confirmExpensePaymentAndUpdateBank(expense, selectedBankId, userEmail);
+      const result = await confirmExpensePaymentAndUpdateBank(expense, selectedBankId, userEmail);
+      if (result && result.groupFullyPaid) {
+        alert("Parcelamento quitado com sucesso.");
+      }
     } catch (err) {
       console.error(err);
       alert("Erro ao confirmar pagamento: " + (err as any).message);
@@ -1711,13 +1816,11 @@ export default function DashboardLayout() {
                 onChange={(e) => setSelectedMonth(e.target.value)}
                 className="bg-zinc-950 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-2 text-xs text-white outline-none transition-all cursor-pointer w-full sm:w-44 font-mono font-bold"
               >
-                <option value="">Todos os Ciclos (Acumulado)</option>
-                <option value="2026-06">Junho / 2026</option>
-                <option value="2026-05">Maio / 2026</option>
-                <option value="2026-04">Abril / 2026</option>
-                <option value="2026-03">Março / 2026</option>
-                <option value="2026-02">Fevereiro / 2026</option>
-                <option value="2026-01">Janeiro / 2026</option>
+                {availableCycles.map((cycle) => (
+                  <option key={cycle.value} value={cycle.value}>
+                    {cycle.label}
+                  </option>
+                ))}
               </select>
               
               {selectedMonth && (
@@ -2106,26 +2209,54 @@ export default function DashboardLayout() {
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider">Filtros Avançados: Despesas Fixas</h3>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   <div>
-                    <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Vencimento Inicial</label>
-                    <input
-                      type="date"
-                      value={fixedVencimentoStart}
-                      onChange={(e) => setFixedVencimentoStart(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none font-mono"
-                    />
+                    <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Período</label>
+                    <select
+                      value={fixedPeriodFilter}
+                      onChange={(e) => {
+                        const val = e.target.value as any;
+                        setFixedPeriodFilter(val);
+                        if (val !== "personalizado") {
+                          setFixedVencimentoStart("");
+                          setFixedVencimentoEnd("");
+                        }
+                      }}
+                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer"
+                    >
+                      <option value="este_mes">Este mês</option>
+                      <option value="proximo_mes">Próximo mês</option>
+                      <option value="proximos_3_meses">Próximos 3 meses</option>
+                      <option value="proximos_6_meses">Próximos 6 meses</option>
+                      <option value="este_ano">Este ano</option>
+                      <option value="todas_futuras">Todas futuras</option>
+                      <option value="personalizado">Personalizado (Manual)</option>
+                    </select>
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Vencimento Final</label>
-                    <input
-                      type="date"
-                      value={fixedVencimentoEnd}
-                      onChange={(e) => setFixedVencimentoEnd(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none font-mono"
-                    />
-                  </div>
+                  {fixedPeriodFilter === "personalizado" && (
+                    <>
+                      <div>
+                        <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Vencimento Inicial</label>
+                        <input
+                          type="date"
+                          value={fixedVencimentoStart}
+                          onChange={(e) => setFixedVencimentoStart(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Vencimento Final</label>
+                        <input
+                          type="date"
+                          value={fixedVencimentoEnd}
+                          onChange={(e) => setFixedVencimentoEnd(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none font-mono"
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <div>
                     <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Status de Liquidação</label>
@@ -2152,6 +2283,21 @@ export default function DashboardLayout() {
                       <option value="ativas">Ativas</option>
                       <option value="baixadas">Baixadas</option>
                       <option value="nao-recorrentes">Não recorrentes</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Parcelamento</label>
+                    <select
+                      value={fixedParcelamentoFilter}
+                      onChange={(e) => setFixedParcelamentoFilter(e.target.value as any)}
+                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer"
+                    >
+                      <option value="todos">Todos</option>
+                      <option value="a_vista">À vista</option>
+                      <option value="parcelado">Parcelado</option>
+                      <option value="em_andamento">Em andamento</option>
+                      <option value="quitado">Quitado</option>
                     </select>
                   </div>
 
@@ -2211,20 +2357,23 @@ export default function DashboardLayout() {
 
               {/* Cards row */}
               {(() => {
-                const totalFixasMonth = filteredFixedExpenses.reduce((sum, e) => sum + e.valor, 0);
-                const totalPendentesMonth = filteredFixedExpenses.filter(e => e.status === "pendente" && !e.baixadaCompletamente).reduce((sum, e) => sum + e.valor, 0);
-                const totalPagasMonth = filteredFixedExpenses.filter(e => e.status === "pago" && !e.baixadaCompletamente).reduce((sum, e) => sum + e.valor, 0);
+                const isMonthOnly = fixedPeriodFilter === "este_mes";
+                const labelSuffix = isMonthOnly ? "do Mês" : "do Período";
+
+                const totalFixasPeriod = filteredFixedExpenses.reduce((sum, e) => sum + e.valor, 0);
+                const totalPendentesPeriod = filteredFixedExpenses.filter(e => e.status === "pendente" && !e.baixadaCompletamente).reduce((sum, e) => sum + e.valor, 0);
+                const totalPagasPeriod = filteredFixedExpenses.filter(e => e.status === "pago" && !e.baixadaCompletamente).reduce((sum, e) => sum + e.valor, 0);
                 const totalVencidasFixas = filteredFixedExpenses.filter(e => e.status === "pendente" && !e.baixadaCompletamente && e.dataVencimento < todayStr).reduce((sum, e) => sum + e.valor, 0);
-                const activeRecurrences = expenses.filter(e => e.tipo === "fixa" && e.recorrente && e.recorrenciaAtiva && !e.baixadaCompletamente).length;
-                const closedRecurrences = expenses.filter(e => e.tipo === "fixa" && e.baixadaCompletamente).length;
+                const activeRecurrences = filteredFixedExpenses.filter(e => e.recorrente && e.recorrenciaAtiva && !e.baixadaCompletamente).length;
+                const closedRecurrences = filteredFixedExpenses.filter(e => e.baixadaCompletamente).length;
 
                 return (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                     <div className="rounded-2xl bg-zinc-900/40 border border-white/5 p-4 flex flex-col justify-between hover:border-zinc-800 transition-all">
                       <div>
-                        <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider block mb-1">Despesas do Mês</span>
+                        <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider block mb-1">Despesas {labelSuffix}</span>
                         <h2 className="text-xl font-black text-white font-mono leading-none">
-                          {formatCurrency(totalFixasMonth)}
+                          {formatCurrency(totalFixasPeriod)}
                         </h2>
                       </div>
                       <p className="text-zinc-600 text-[9px] mt-2">{filteredFixedExpenses.length} registradas</p>
@@ -2232,22 +2381,22 @@ export default function DashboardLayout() {
 
                     <div className="rounded-2xl bg-zinc-900/40 border border-white/5 p-4 flex flex-col justify-between hover:border-zinc-800 transition-all">
                       <div>
-                        <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider block mb-1">Pendentes do Mês</span>
+                        <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider block mb-1">Pendentes {labelSuffix}</span>
                         <h2 className="text-xl font-black text-amber-500 font-mono leading-none">
-                          {formatCurrency(totalPendentesMonth)}
+                          {formatCurrency(totalPendentesPeriod)}
                         </h2>
                       </div>
-                      <p className="text-zinc-600 text-[9px] mt-2">Aguardando liquidação</p>
+                      <p className="text-zinc-600 text-[9px] mt-2 font-semibold text-amber-500/80">Aguardando liquidação</p>
                     </div>
 
                     <div className="rounded-2xl bg-zinc-900/40 border border-white/5 p-4 flex flex-col justify-between hover:border-zinc-800 transition-all">
                       <div>
-                        <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider block mb-1">Pagas do Mês</span>
+                        <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider block mb-1">Pagas {labelSuffix}</span>
                         <h2 className="text-xl font-black text-emerald-400 font-mono leading-none">
-                          {formatCurrency(totalPagasMonth)}
+                          {formatCurrency(totalPagasPeriod)}
                         </h2>
                       </div>
-                      <p className="text-zinc-600 text-[9px] mt-2">Obrigações quitadas</p>
+                      <p className="text-zinc-600 text-[9px] mt-2 font-semibold text-emerald-400/80">Obrigações quitadas</p>
                     </div>
 
                     <div className="rounded-2xl bg-zinc-900/40 border border-white/5 p-4 flex flex-col justify-between hover:border-zinc-800 transition-all">

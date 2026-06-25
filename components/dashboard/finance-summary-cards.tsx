@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -11,7 +11,10 @@ import {
   Layers
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { Transaction, Expense } from "@/types/finance";
+import { Transaction, Expense, BankAccount, Investment, Asset } from "@/types/finance";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth, db } from "@/lib/firebase";
 
 interface FinanceSummaryCardsProps {
   transactions: Transaction[];
@@ -19,6 +22,11 @@ interface FinanceSummaryCardsProps {
 }
 
 export default function FinanceSummaryCards({ transactions, expenses }: FinanceSummaryCardsProps) {
+  const [banks, setBanks] = useState<BankAccount[]>([]);
+  const [investments, setInvestments] = useState<Investment[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [userEmail, setUserEmail] = useState("");
+
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
       style: "currency",
@@ -26,108 +34,160 @@ export default function FinanceSummaryCards({ transactions, expenses }: FinanceS
     }).format(value);
   };
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  // Get current user email
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserEmail(user.email || "");
+      }
+    });
+    return () => unsubAuth();
+  }, []);
 
-  // 1. Calculations
+  // Real-time subscribe to financial sources for consolidation
+  useEffect(() => {
+    if (!userEmail) return;
+
+    const qBanks = query(
+      collection(db, "financeiro", "geral", "bancos"),
+      where("criadoPorEmail", "==", userEmail)
+    );
+    const unsubBanks = onSnapshot(qBanks, (snap) => {
+      const list: BankAccount[] = [];
+      snap.forEach((d) => {
+        list.push({ id: d.id, ...d.data() } as BankAccount);
+      });
+      setBanks(list);
+    });
+
+    const qInvs = query(
+      collection(db, "financeiro", "geral", "investimentos"),
+      where("criadoPorEmail", "==", userEmail)
+    );
+    const unsubInvs = onSnapshot(qInvs, (snap) => {
+      const list: Investment[] = [];
+      snap.forEach((d) => {
+        list.push({ id: d.id, ...d.data() } as Investment);
+      });
+      setInvestments(list);
+    });
+
+    const qAssets = query(
+      collection(db, "financeiro", "geral", "patrimonios"),
+      where("criadoPorEmail", "==", userEmail)
+    );
+    const unsubAssets = onSnapshot(qAssets, (snap) => {
+      const list: Asset[] = [];
+      snap.forEach((d) => {
+        list.push({ id: d.id, ...d.data() } as Asset);
+      });
+      setAssets(list);
+    });
+
+    return () => {
+      unsubBanks();
+      unsubInvs();
+      unsubAssets();
+    };
+  }, [userEmail]);
+
+  // 1. Core calculations
+  const totalBancosAtivos = banks
+    .filter((b) => b.ativo)
+    .reduce((sum, b) => sum + (b.saldoAtual || 0), 0);
+
+  const totalInvested = investments
+    .filter((i) => i.ativo)
+    .reduce((sum, i) => sum + (i.valorAtual || 0), 0);
+
+  const totalAssets = assets
+    .filter((a) => a.ativo)
+    .reduce((sum, a) => sum + (a.valorEstimado || 0), 0);
+
+  const patrimonConsolidado = totalBancosAtivos + totalInvested + totalAssets;
+
   const totalEntradas = transactions
     .filter((t) => t.tipo === "entrada")
-    .reduce((sum, t) => sum + t.valor, 0);
+    .reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
 
   const totalSaidas = transactions
     .filter((t) => t.tipo === "saida")
-    .reduce((sum, t) => sum + t.valor, 0);
+    .reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
 
-  // Despesas pagas
-  const totalDespesasPagas = expenses
-    .filter((e) => e.status === "pago")
-    .reduce((sum, e) => sum + e.valor, 0);
-
-  // Saldo atual = total entradas - total saídas - despesas pagas
-  const saldoAtual = totalEntradas - totalSaidas - totalDespesasPagas;
-
-  // Despesas fixas do mês (let's assume all registered fixed expenses are for the current month)
-  const totalDespesasFixas = expenses
-    .filter((e) => e.tipo === "fixa")
-    .reduce((sum, e) => sum + e.valor, 0);
-
-  // Despesas variáveis do mês
-  const totalDespesasVariaveis = expenses
-    .filter((e) => e.tipo === "variavel")
-    .reduce((sum, e) => sum + e.valor, 0);
-
-  // Resultado do mês = entradas do mês - saídas do mês - despesas do mês
-  const totalDespesasGeral = expenses.reduce((sum, e) => sum + e.valor, 0);
-  const resultadoMes = totalEntradas - totalSaidas - totalDespesasGeral;
-
-  // Despesas vencidas = dataVencimento < hoje e status diferente de pago
-  const despesasVencidasList = expenses.filter(
-    (e) => e.tipo === "fixa" && e.status !== "pago" && e.dataVencimento < todayStr
-  );
-  const totalDespesasVencidas = despesasVencidasList.reduce((sum, e) => sum + e.valor, 0);
+  const resultadoCiclo = totalEntradas - totalSaidas;
 
   const cardsData = [
     {
       title: "Saldo Atual",
-      value: saldoAtual,
-      description: "Cálculo consolidado em tempo real",
+      value: totalBancosAtivos,
+      description: "Consolidado total de bancos ativos",
       icon: DollarSign,
       color: "from-emerald-500 to-teal-400",
       textColor: "text-emerald-400",
       bgHover: "hover:border-emerald-500/30",
     },
     {
-      title: "Total de Entradas",
+      title: "Disponível em Bancos",
+      value: totalBancosAtivos,
+      description: "Disponibilidade líquida total",
+      icon: Layers,
+      color: "from-emerald-500 to-teal-400",
+      textColor: "text-emerald-400",
+      bgHover: "hover:border-emerald-500/30",
+    },
+    {
+      title: "Entradas",
       value: totalEntradas,
-      description: "Faturamento e receitas brutas",
+      description: "Faturamento bruto do ciclo",
       icon: TrendingUp,
       color: "from-emerald-500 to-lime-400",
       textColor: "text-emerald-400",
       bgHover: "hover:border-emerald-500/30",
     },
     {
-      title: "Total de Saídas",
+      title: "Saídas",
       value: totalSaidas,
-      description: "Saídas operacionais registradas",
+      description: "Fluxos de saída operacional",
       icon: TrendingDown,
       color: "from-red-500 to-orange-400",
       textColor: "text-red-400",
       bgHover: "hover:border-red-500/30",
     },
     {
-      title: "Despesas Fixas",
-      value: totalDespesasFixas,
-      description: "Custos fixos recorrentes",
+      title: "Resultado do Ciclo",
+      value: resultadoCiclo,
+      description: "Resultado líquido (Entradas - Saídas)",
+      icon: Activity,
+      color: resultadoCiclo >= 0 ? "from-emerald-500 to-teal-400" : "from-red-500 to-rose-400",
+      textColor: resultadoCiclo >= 0 ? "text-emerald-400" : "text-red-400",
+      bgHover: resultadoCiclo >= 0 ? "hover:border-emerald-500/30" : "hover:border-red-500/30",
+    },
+    {
+      title: "Total Investido",
+      value: totalInvested,
+      description: "Aplicações financeiras ativas",
       icon: Calendar,
       color: "from-amber-500 to-orange-400",
       textColor: "text-amber-400",
       bgHover: "hover:border-amber-500/30",
     },
     {
-      title: "Despesas Variáveis",
-      value: totalDespesasVariaveis,
-      description: "Gastos flexíveis do período",
-      icon: Layers,
+      title: "Patrimônio em Bens",
+      value: totalAssets,
+      description: "Bens e patrimônios ativos",
+      icon: AlertTriangle,
       color: "from-blue-500 to-indigo-400",
       textColor: "text-blue-400",
       bgHover: "hover:border-blue-500/30",
     },
     {
-      title: "Resultado do Mês",
-      value: resultadoMes,
-      description: "Lucro ou prejuízo projetado",
-      icon: Activity,
-      color: resultadoMes >= 0 ? "from-emerald-500 to-teal-400" : "from-red-500 to-rose-400",
-      textColor: resultadoMes >= 0 ? "text-emerald-400" : "text-red-400",
-      bgHover: resultadoMes >= 0 ? "hover:border-emerald-500/30" : "hover:border-red-500/30",
-    },
-    {
-      title: "Despesas Vencidas",
-      value: totalDespesasVencidas,
-      description: `${despesasVencidasList.length} item(ns) pendente(s) atrasado(s)`,
-      icon: AlertTriangle,
-      color: "from-rose-500 to-red-400",
-      textColor: "text-rose-400",
-      bgHover: "hover:border-rose-500/30",
+      title: "Patrimônio Consolidado",
+      value: patrimonConsolidado,
+      description: "Disponível + Investido + Bens",
+      icon: DollarSign,
+      color: "from-purple-500 to-indigo-400",
+      textColor: "text-purple-400",
+      bgHover: "hover:border-purple-500/30",
     },
   ];
 
@@ -153,7 +213,7 @@ export default function FinanceSummaryCards({ transactions, expenses }: FinanceS
       animate="show"
       className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"
     >
-      {cardsData.map((card, index) => {
+      {cardsData.map((card) => {
         const Icon = card.icon;
         return (
           <motion.div

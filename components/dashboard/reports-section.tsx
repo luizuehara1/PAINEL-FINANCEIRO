@@ -147,13 +147,13 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
   const totalReceita = useMemo(() => {
     return filteredTxs
       .filter(t => t.tipo === "entrada")
-      .reduce((sum, t) => sum + t.valor, 0);
+      .reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   }, [filteredTxs]);
 
   const totalSaidasTx = useMemo(() => {
     return filteredTxs
       .filter(t => t.tipo === "saida")
-      .reduce((sum, t) => sum + t.valor, 0);
+      .reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   }, [filteredTxs]);
 
   const totalFixed = useMemo(() => {
@@ -222,10 +222,11 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
       if (!groups[key]) {
         groups[key] = { date: key, entradas: 0, saidas: 0, despesas: 0, resultado: 0 };
       }
+      const val = Math.abs(t.valor || 0);
       if (t.tipo === "entrada") {
-        groups[key].entradas += t.valor;
+        groups[key].entradas += val;
       } else {
-        groups[key].saidas += t.valor;
+        groups[key].saidas += val;
       }
     });
 

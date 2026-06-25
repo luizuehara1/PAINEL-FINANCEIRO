@@ -86,8 +86,8 @@ export function exportTransactionsPDF(transactions: Transaction[], filtersInfo: 
   doc.text(filtersInfo || "Nenhum filtro ativo.", 14, 54);
 
   // Calculations
-  const totalEntradas = transactions.filter((t) => t.tipo === "entrada").reduce((sum, t) => sum + t.valor, 0);
-  const totalSaidas = transactions.filter((t) => t.tipo === "saida").reduce((sum, t) => sum + t.valor, 0);
+  const totalEntradas = transactions.filter((t) => t.tipo === "entrada").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
+  const totalSaidas = transactions.filter((t) => t.tipo === "saida").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   const saldoPeriodo = totalEntradas - totalSaidas;
 
   // Summary Cards visual boxes
@@ -166,7 +166,7 @@ export function exportTransactionsPDF(transactions: Transaction[], filtersInfo: 
   doc.save(`entradas_saidas_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
-export function exportFixedExpensesPDF(expenses: Expense[], filtersInfo: string, userEmail: string) {
+export function exportFixedExpensesPDF(expenses: Expense[], filtersInfo: string, userEmail: string, todayStr?: string) {
   const doc = new jsPDF();
   applyStyles(doc, "Relatório de Despesas Fixas", "Obrigações e Compromissos Recorrentes", userEmail);
 
@@ -181,30 +181,40 @@ export function exportFixedExpensesPDF(expenses: Expense[], filtersInfo: string,
   doc.text(filtersInfo || "Nenhum filtro ativo.", 14, 54);
 
   // Calculations
+  const tStr = todayStr || new Date().toISOString().slice(0, 10);
   const totalVal = expenses.reduce((sum, e) => sum + e.valor, 0);
   const totalPagas = expenses.filter((e) => e.status === "pago").reduce((sum, e) => sum + e.valor, 0);
   const totalPendentes = expenses.filter((e) => e.status !== "pago").reduce((sum, e) => sum + e.valor, 0);
+  const totalVencidas = expenses.filter((e) => e.status !== "pago" && e.dataVencimento < tStr).reduce((sum, e) => sum + e.valor, 0);
+  const totalFuturas = expenses.filter((e) => e.status !== "pago" && e.dataVencimento > tStr).reduce((sum, e) => sum + e.valor, 0);
 
-  // Visual summary cards
-  doc.setFillColor(244, 244, 245);
-  doc.roundedRect(14, 62, 55, 20, 3, 3, "F");
-  doc.roundedRect(77, 62, 55, 20, 3, 3, "F");
-  doc.roundedRect(140, 62, 55, 20, 3, 3, "F");
+  // Visual summary cards - 5 cards
+  const cardWidth = 33;
+  const cardSpacing = 4;
+  
+  const cards = [
+    { label: "VALOR TOTAL", val: totalVal, color: [24, 24, 27] },
+    { label: "TOTAL PAGAS", val: totalPagas, color: [16, 185, 129] },
+    { label: "TOTAL PENDENTES", val: totalPendentes, color: [245, 158, 11] },
+    { label: "TOTAL VENCIDAS", val: totalVencidas, color: [239, 68, 68] },
+    { label: "TOTAL FUTURAS", val: totalFuturas, color: [59, 130, 246] }
+  ];
 
-  doc.setFontSize(8);
-  doc.setTextColor(113, 113, 122);
-  doc.text("VALOR TOTAL", 18, 68);
-  doc.text("TOTAL PAGAS", 81, 68);
-  doc.text("TOTAL PENDENTES", 144, 68);
+  cards.forEach((card, index) => {
+    const x = 14 + index * (cardWidth + cardSpacing);
+    doc.setFillColor(244, 244, 245);
+    doc.roundedRect(x, 62, cardWidth, 20, 2, 2, "F");
 
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(24, 24, 27);
-  doc.text(formatCurrencyBRL(totalVal), 18, 76);
-  doc.setTextColor(16, 185, 129);
-  doc.text(formatCurrencyBRL(totalPagas), 81, 76);
-  doc.setTextColor(239, 68, 68);
-  doc.text(formatCurrencyBRL(totalPendentes), 144, 76);
+    doc.setFontSize(6.5);
+    doc.setTextColor(113, 113, 122);
+    doc.setFont("helvetica", "normal");
+    doc.text(card.label, x + 2, 68);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(card.color[0], card.color[1], card.color[2]);
+    doc.text(formatCurrencyBRL(card.val), x + 2, 76);
+  });
 
   // Table Data
   const tableBody = expenses.length > 0
@@ -362,8 +372,8 @@ export function exportOverviewPDF(
   applyStyles(doc, "Resumo Geral Financeiro", `Relatório Executivo Mensal - Competência ${selectedMonth || "Consolidado"}`, userEmail);
 
   // Calculations
-  const totalEntradas = transactions.filter((t) => t.tipo === "entrada").reduce((sum, t) => sum + t.valor, 0);
-  const totalSaidas = transactions.filter((t) => t.tipo === "saida").reduce((sum, t) => sum + t.valor, 0);
+  const totalEntradas = transactions.filter((t) => t.tipo === "entrada").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
+  const totalSaidas = transactions.filter((t) => t.tipo === "saida").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   const totalDespesasPagas = expenses.filter((e) => e.status === "pago").reduce((sum, e) => sum + e.valor, 0);
   const totalDespesasFixas = expenses.filter((e) => e.tipo === "fixa").reduce((sum, e) => sum + e.valor, 0);
   const totalDespesasVariaveis = expenses.filter((e) => e.tipo === "variavel").reduce((sum, e) => sum + e.valor, 0);
@@ -509,8 +519,8 @@ export function exportReportsPDF(
   applyStyles(doc, "Relatório Consolidado de BI Financeiro", `Análise de Métricas Inteligentes - ${period || "Geral"}`, userEmail);
 
   // Core BI Metrics
-  const totalEntradas = transactions.filter((t) => t.tipo === "entrada").reduce((sum, t) => sum + t.valor, 0);
-  const totalSaidas = transactions.filter((t) => t.tipo === "saida").reduce((sum, t) => sum + t.valor, 0);
+  const totalEntradas = transactions.filter((t) => t.tipo === "entrada").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
+  const totalSaidas = transactions.filter((t) => t.tipo === "saida").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   const totalDespesasGeral = expenses.reduce((sum, e) => sum + e.valor, 0);
   const custosTotais = totalSaidas + totalDespesasGeral;
   const lucroPrejuizo = totalEntradas - custosTotais;

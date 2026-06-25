@@ -14,6 +14,7 @@ import {
   Ban
 } from "lucide-react";
 import { Expense } from "@/types/finance";
+import { formatCompetenceLabel } from "@/lib/cycle-utils";
 import { motion, AnimatePresence } from "framer-motion";
 import NoteViewerModal from "./note-viewer-modal";
 
@@ -37,6 +38,7 @@ export default function ExpenseTable({
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<"todas" | "fixa" | "variavel">("todas");
   const [statusFilter, setStatusFilter] = useState<"todos" | "pago" | "pendente" | "vencido" | "baixada">("todos");
+  const [installmentFilter, setInstallmentFilter] = useState<"todos" | "a_vista" | "parcelado" | "em_andamento" | "quitado">("todos");
   const [selectedNote, setSelectedNote] = useState<{ url: string; tipo: string; nome: string } | null>(null);
 
   // State for "Baixar completamente" modal
@@ -100,9 +102,9 @@ export default function ExpenseTable({
 
     return {
       label: "Pendente",
-      bgClass: "bg-zinc-800 text-zinc-400 border-zinc-700",
-      indicatorColor: "bg-zinc-500",
-      rowClass: "text-zinc-300 hover:bg-zinc-800/[0.01] border-l-[3px] border-zinc-700",
+      bgClass: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+      indicatorColor: "bg-amber-400",
+      rowClass: "text-zinc-300 hover:bg-zinc-800/[0.01] border-l-[3px] border-amber-500/10",
     };
   };
 
@@ -138,7 +140,18 @@ export default function ExpenseTable({
       matchesStatus = !!e.baixadaCompletamente;
     }
 
-    return matchesSearch && matchesType && matchesStatus;
+    let matchesInstallment = true;
+    if (installmentFilter === "a_vista") {
+      matchesInstallment = !e.parcelado;
+    } else if (installmentFilter === "parcelado") {
+      matchesInstallment = !!e.parcelado;
+    } else if (installmentFilter === "em_andamento") {
+      matchesInstallment = !!e.parcelado && e.parcelamentoAtivo === true;
+    } else if (installmentFilter === "quitado") {
+      matchesInstallment = !!e.parcelado && e.parcelamentoQuitado === true;
+    }
+
+    return matchesSearch && matchesType && matchesStatus && matchesInstallment;
   });
 
   return (
@@ -195,6 +208,19 @@ export default function ExpenseTable({
             <option value="vencido">Vencidas</option>
             <option value="baixada">Baixadas / Encerradas</option>
           </select>
+
+          {/* Parcelamento Filter */}
+          <select
+            value={installmentFilter}
+            onChange={(e) => setInstallmentFilter(e.target.value as any)}
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none transition-all cursor-pointer focus:border-emerald-500/50"
+          >
+            <option value="todos">Parcelamento: Todos</option>
+            <option value="a_vista">Parcelamento: À vista</option>
+            <option value="parcelado">Parcelamento: Parcelado</option>
+            <option value="em_andamento">Parcelamento: Em andamento</option>
+            <option value="quitado">Parcelamento: Quitado</option>
+          </select>
         </div>
       </div>
 
@@ -214,6 +240,7 @@ export default function ExpenseTable({
                 <th className="py-3 px-4">Vencimento / Data</th>
                 <th className="py-3 px-4">Competência</th>
                 <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4">Parcela</th>
                 <th className="py-3 px-4">Recorrência</th>
                 <th className="py-3 px-4">Nota</th>
                 <th className="py-3 px-4">Forma de pagamento</th>
@@ -278,7 +305,7 @@ export default function ExpenseTable({
 
                     {/* Competência */}
                     <td className="py-3.5 px-4 font-mono text-zinc-400 whitespace-nowrap">
-                      {competence}
+                      {competence !== "-" ? formatCompetenceLabel(competence) : "-"}
                     </td>
 
                     {/* Status */}
@@ -287,6 +314,32 @@ export default function ExpenseTable({
                         <span className={`w-1.5 h-1.5 rounded-full ${statusDetails.indicatorColor}`} />
                         {statusDetails.label}
                       </span>
+                    </td>
+
+                    {/* Parcela */}
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      {e.parcelado ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="font-mono text-xs text-white font-bold">
+                            {e.parcelaAtual}/{e.totalParcelas}
+                          </span>
+                          {e.parcelamentoQuitado ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              Quitado
+                            </span>
+                          ) : e.parcelamentoAtivo ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              Em andamento
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                              Parcelado
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-zinc-600">-</span>
+                      )}
                     </td>
 
                     {/* Recorrência */}

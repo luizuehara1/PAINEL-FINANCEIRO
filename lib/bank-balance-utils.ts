@@ -41,10 +41,11 @@ export async function calculateAvailableBankBalance(banks?: BankAccount[]): Prom
  * Increment a bank's balance atomically.
  */
 export async function increaseBankBalance(bankId: string, amount: number): Promise<void> {
-  if (!bankId || amount <= 0) return;
+  const absAmount = Math.abs(amount || 0);
+  if (!bankId || absAmount <= 0) return;
   const bankRef = doc(db, "financeiro", "geral", "bancos", bankId);
   await updateDoc(bankRef, {
-    saldoAtual: increment(amount),
+    saldoAtual: increment(absAmount),
     atualizadoEm: new Date().toISOString()
   });
 }
@@ -53,10 +54,11 @@ export async function increaseBankBalance(bankId: string, amount: number): Promi
  * Decrement a bank's balance atomically.
  */
 export async function decreaseBankBalance(bankId: string, amount: number): Promise<void> {
-  if (!bankId || amount <= 0) return;
+  const absAmount = Math.abs(amount || 0);
+  if (!bankId || absAmount <= 0) return;
   const bankRef = doc(db, "financeiro", "geral", "bancos", bankId);
   await updateDoc(bankRef, {
-    saldoAtual: increment(-amount),
+    saldoAtual: increment(-absAmount),
     atualizadoEm: new Date().toISOString()
   });
 }
@@ -66,10 +68,11 @@ export async function decreaseBankBalance(bankId: string, amount: number): Promi
  */
 export async function applyTransactionToBank(transaction: Transaction): Promise<void> {
   if (!transaction.bancoId || !transaction.valor) return;
+  const absAmount = Math.abs(transaction.valor || 0);
   if (transaction.tipo === "entrada") {
-    await increaseBankBalance(transaction.bancoId, transaction.valor);
+    await increaseBankBalance(transaction.bancoId, absAmount);
   } else if (transaction.tipo === "saida") {
-    await decreaseBankBalance(transaction.bancoId, transaction.valor);
+    await decreaseBankBalance(transaction.bancoId, absAmount);
   }
 }
 
@@ -78,10 +81,11 @@ export async function applyTransactionToBank(transaction: Transaction): Promise<
  */
 export async function reverseTransactionFromBank(transaction: Transaction): Promise<void> {
   if (!transaction.bancoId || !transaction.valor) return;
+  const absAmount = Math.abs(transaction.valor || 0);
   if (transaction.tipo === "entrada") {
-    await decreaseBankBalance(transaction.bancoId, transaction.valor);
+    await decreaseBankBalance(transaction.bancoId, absAmount);
   } else if (transaction.tipo === "saida") {
-    await increaseBankBalance(transaction.bancoId, transaction.valor);
+    await increaseBankBalance(transaction.bancoId, absAmount);
   }
 }
 
@@ -101,10 +105,11 @@ export async function updateBankBalanceOnTransactionEdit(
       if (oldBankSnap.exists()) {
         const currentSaldo = oldBankSnap.data().saldoAtual || 0;
         let newSaldo = currentSaldo;
+        const oldAbsValue = Math.abs(oldTransaction.valor || 0);
         if (oldTransaction.tipo === "entrada") {
-          newSaldo -= oldTransaction.valor;
+          newSaldo -= oldAbsValue;
         } else if (oldTransaction.tipo === "saida") {
-          newSaldo += oldTransaction.valor;
+          newSaldo += oldAbsValue;
         }
         firestoreTransaction.update(oldBankRef, {
           saldoAtual: newSaldo,
@@ -120,10 +125,11 @@ export async function updateBankBalanceOnTransactionEdit(
       if (newBankSnap.exists()) {
         const currentSaldo = newBankSnap.data().saldoAtual || 0;
         let newSaldo = currentSaldo;
+        const newAbsValue = Math.abs(newTransaction.valor || 0);
         if (newTransaction.tipo === "entrada") {
-          newSaldo += newTransaction.valor;
+          newSaldo += newAbsValue;
         } else if (newTransaction.tipo === "saida") {
-          newSaldo -= newTransaction.valor;
+          newSaldo -= newAbsValue;
         }
         firestoreTransaction.update(newBankRef, {
           saldoAtual: newSaldo,
@@ -141,9 +147,33 @@ export async function confirmExpensePaymentAndUpdateBank(
   expense: Expense | string,
   bank: BankAccount | string,
   userEmail: string
-): Promise<string> {
+): Promise<{ transId: string; groupFullyPaid: boolean }> {
   const expenseId = typeof expense === "string" ? expense : expense.id;
   const bankId = typeof bank === "string" ? bank : bank.id;
+
+  let installmentGroupId: string | null = null;
+  let groupExpenses: Expense[] = [];
+
+  if (typeof expense !== "string" && expense.parcelado && expense.grupoParcelamentoId) {
+    installmentGroupId = expense.grupoParcelamentoId;
+  } else {
+    const expSnap = await getDoc(doc(db, "financeiro", "geral", "despesas", expenseId));
+    if (expSnap.exists()) {
+      const expD = expSnap.data() as Expense;
+      if (expD.parcelado && expD.grupoParcelamentoId) {
+        installmentGroupId = expD.grupoParcelamentoId;
+      }
+    }
+  }
+
+  if (installmentGroupId) {
+    const q = query(
+      collection(db, "financeiro", "geral", "despesas"),
+      where("grupoParcelamentoId", "==", installmentGroupId)
+    );
+    const snap = await getDocs(q);
+    groupExpenses = snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense));
+  }
 
   return await runTransaction(db, async (firestoreTransaction) => {
     const expenseRef = doc(db, "financeiro", "geral", "despesas", expenseId);
@@ -164,7 +194,7 @@ export async function confirmExpensePaymentAndUpdateBank(
 
     // Prevent duplicate payment or deduction
     if (expData.status === "pago" || expData.saidaGerada === true || expData.transacaoGeradaId) {
-      return expData.transacaoGeradaId || "";
+      return { transId: expData.transacaoGeradaId || "", groupFullyPaid: false };
     }
 
     const transColl = collection(db, "financeiro", "geral", "transacoes");
@@ -174,12 +204,14 @@ export async function confirmExpensePaymentAndUpdateBank(
     const nowStr = new Date().toISOString();
     const paymentDate = nowStr.split("T")[0];
 
+    const amount = Math.abs(expData.valor || 0);
+
     const transPayload = {
       tipo: "saida",
       nome: expData.nome,
       descricao: `Pagamento confirmado da despesa ${expData.tipo === "fixa" ? "fixa" : "variável"}: ${expData.nome}`,
       categoria: expData.categoria,
-      valor: expData.valor,
+      valor: amount,
       formaPagamento: expData.formaPagamento,
       data: paymentDate,
       origem: "despesa",
@@ -202,8 +234,18 @@ export async function confirmExpensePaymentAndUpdateBank(
     // Create the out transaction
     firestoreTransaction.set(newTransRef, transPayload);
 
-    // Update expense fields
-    firestoreTransaction.update(expenseRef, {
+    // Determine if the group is fully paid off
+    let groupFullyPaid = false;
+    if (expData.parcelado && expData.grupoParcelamentoId && groupExpenses.length > 0) {
+      const siblingInstallments = groupExpenses.filter(e => e.id !== expData.id);
+      const allOthersPaid = siblingInstallments.every(e => e.status === "pago");
+      if (allOthersPaid) {
+        groupFullyPaid = true;
+      }
+    }
+
+    // Update fields
+    const expenseUpdates: any = {
       status: "pago",
       pagoEm: nowStr,
       saidaGerada: true,
@@ -211,16 +253,42 @@ export async function confirmExpensePaymentAndUpdateBank(
       bancoPagamentoNome: bankData.nome,
       transacaoGeradaId: transId,
       atualizadoEm: nowStr,
-    });
+    };
+
+    if (groupFullyPaid) {
+      expenseUpdates.parcelamentoAtivo = false;
+      expenseUpdates.parcelamentoQuitado = true;
+      expenseUpdates.quitadoEm = nowStr;
+      expenseUpdates.baixadaCompletamente = true;
+    }
+
+    // Update current expense
+    firestoreTransaction.update(expenseRef, expenseUpdates);
+
+    // If group is fully paid, update all sibling installments as well
+    if (groupFullyPaid) {
+      for (const sibling of groupExpenses) {
+        if (sibling.id !== expData.id) {
+          const siblingRef = doc(db, "financeiro", "geral", "despesas", sibling.id);
+          firestoreTransaction.update(siblingRef, {
+            parcelamentoAtivo: false,
+            parcelamentoQuitado: true,
+            quitadoEm: nowStr,
+            baixadaCompletamente: true,
+            atualizadoEm: nowStr,
+          });
+        }
+      }
+    }
 
     // Deduct from bank
     const currentSaldo = bankData.saldoAtual || 0;
     firestoreTransaction.update(bankRef, {
-      saldoAtual: currentSaldo - expData.valor,
+      saldoAtual: Number(currentSaldo || 0) - amount,
       atualizadoEm: nowStr,
     });
 
-    return transId;
+    return { transId, groupFullyPaid };
   });
 }
 
@@ -235,6 +303,26 @@ export async function confirmCardInvoicePaymentAndUpdateBank(
 ): Promise<string> {
   const invoiceId = typeof invoice === "string" ? invoice : invoice.id;
   const bankId = typeof bank === "string" ? bank : bank.id;
+
+  // ANTI-DUPLICIDADE pre-checks:
+  const q = query(
+    collection(db, "financeiro", "geral", "transacoes"),
+    where("origem", "==", "cartao"),
+    where("faturaId", "==", invoiceId)
+  );
+  const existingTxSnap = await getDocs(q);
+  if (!existingTxSnap.empty) {
+    throw new Error("Essa fatura já foi paga.");
+  }
+
+  const invoiceDocRef = doc(db, "financeiro", "geral", "faturasCartao", invoiceId);
+  const invoiceDocSnap = await getDoc(invoiceDocRef);
+  if (invoiceDocSnap.exists()) {
+    const invObj = invoiceDocSnap.data() as CardInvoice;
+    if (invObj.status === "paga" || invObj.transacaoGeradaId) {
+      throw new Error("Essa fatura já foi paga.");
+    }
+  }
 
   return await runTransaction(db, async (firestoreTransaction) => {
     const invoiceRef = doc(db, "financeiro", "geral", "faturasCartao", invoiceId);
@@ -254,7 +342,7 @@ export async function confirmCardInvoicePaymentAndUpdateBank(
     const bankData = { id: bankSnap.id, ...bankSnap.data() } as BankAccount;
 
     if (invData.status === "paga" || invData.transacaoGeradaId) {
-      return invData.transacaoGeradaId || "";
+      throw new Error("Essa fatura já foi paga.");
     }
 
     const transColl = collection(db, "financeiro", "geral", "transacoes");
@@ -264,12 +352,20 @@ export async function confirmCardInvoicePaymentAndUpdateBank(
     const nowStr = new Date().toISOString();
     const paymentDate = nowStr.split("T")[0];
 
+    const amount = Math.abs(invData.valorTotal || 0);
+
+    // DEBUG:
+    console.log("Valor original da fatura:", invData.valorTotal);
+    console.log("Valor normalizado para pagamento:", amount);
+    console.log("Saldo antes:", bankData.saldoAtual);
+    console.log("Saldo depois:", bankData.saldoAtual - amount);
+
     const transPayload = {
       tipo: "saida",
       nome: `Pagamento fatura - ${invData.cartaoNome}`,
-      descricao: `Pagamento da fatura do cartão ${invData.cartaoNome}`,
+      descricao: `Pagamento da fatura do cartão ${invData.cartaoNome} competência ${invData.competencia}`,
       categoria: "Cartão de Crédito",
-      valor: invData.valorTotal,
+      valor: amount,
       formaPagamento: "Débito em conta",
       data: paymentDate,
       origem: "cartao",
@@ -306,7 +402,7 @@ export async function confirmCardInvoicePaymentAndUpdateBank(
     // Deduct from bank
     const currentSaldo = bankData.saldoAtual || 0;
     firestoreTransaction.update(bankRef, {
-      saldoAtual: currentSaldo - invData.valorTotal,
+      saldoAtual: Number(currentSaldo || 0) - amount,
       atualizadoEm: nowStr,
     });
 

@@ -128,6 +128,11 @@ export async function createNextRecurringExpense(
     baixadaCompletamente: false,
     baixadaEm: null,
     motivoBaixa: null,
+
+    // Copy imovel / centro de custo fields
+    imovelId: currentExpense.imovelId || null,
+    imovelNome: currentExpense.imovelNome || null,
+    centroCustoTipo: currentExpense.centroCustoTipo || null,
   };
 
   const docRef = await addDoc(collection(db, "financeiro", "geral", "despesas"), nextExpenseData);
