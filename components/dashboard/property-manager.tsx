@@ -30,6 +30,7 @@ import {
 import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { PropertyCostCenter } from "@/types/finance";
 import { ConfirmDialog } from "./confirm-dialog";
+import { PaginationControls } from "./pagination-controls";
 
 interface PropertyManagerProps {
   userEmail: string;
@@ -40,6 +41,10 @@ export default function PropertyManager({ userEmail }: PropertyManagerProps) {
   const [loading, setLoading] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Form State
   const [nome, setNome] = useState("");
@@ -407,71 +412,88 @@ export default function PropertyManager({ userEmail }: PropertyManagerProps) {
             Nenhum imóvel ou centro de custo cadastrado.
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-white/5">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-zinc-950 border-b border-white/5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                  <th className="px-4 py-3">Nome</th>
-                  <th className="px-4 py-3">Tipo</th>
-                  <th className="px-4 py-3">Endereço</th>
-                  <th className="px-4 py-3 text-center">Status</th>
-                  <th className="px-4 py-3 text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5 bg-zinc-900/10">
-                {properties.map((prop) => (
-                  <tr 
-                    key={prop.id} 
-                    className="hover:bg-zinc-900/30 transition-colors text-xs text-zinc-300"
-                  >
-                    <td className="px-4 py-3 font-semibold text-white">
-                      {prop.nome}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase">
-                        {getTipoLabel(prop.tipo)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-400 max-w-xs truncate">
-                      {prop.endereco || "-"}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <button
-                        type="button"
-                        onClick={() => toggleActive(prop)}
-                        className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wide cursor-pointer select-none transition-all border ${
-                          prop.ativo
-                            ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
-                            : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700"
-                        }`}
-                      >
-                        {prop.ativo ? "Ativo" : "Inativo"}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => startEdit(prop)}
-                          className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-lg transition-colors"
-                          title="Editar imóvel"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTrigger(prop.id)}
-                          className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-red-400 rounded-lg transition-colors"
-                          title="Excluir imóvel"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
+          <div className="space-y-3">
+            <div className="overflow-x-auto rounded-xl border border-white/5">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-zinc-950 border-b border-white/5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                    <th className="px-4 py-3">Nome</th>
+                    <th className="px-4 py-3">Tipo</th>
+                    <th className="px-4 py-3">Endereço</th>
+                    <th className="px-4 py-3 text-center">Status</th>
+                    <th className="px-4 py-3 text-right">Ações</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-white/5 bg-zinc-900/10">
+                  {React.useMemo(() => {
+                    const activePage = Math.min(currentPage, Math.ceil(properties.length / pageSize) || 1);
+                    return properties.slice((activePage - 1) * pageSize, activePage * pageSize);
+                  }, [properties, currentPage, pageSize]).map((prop) => (
+                    <tr 
+                      key={prop.id} 
+                      className="hover:bg-zinc-900/30 transition-colors text-xs text-zinc-300"
+                    >
+                      <td className="px-4 py-3 font-semibold text-white">
+                        {prop.nome}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase">
+                          {getTipoLabel(prop.tipo)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-400 max-w-xs truncate">
+                        {prop.endereco || "-"}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => toggleActive(prop)}
+                          className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wide cursor-pointer select-none transition-all border ${
+                            prop.ativo
+                              ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
+                              : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700"
+                          }`}
+                        >
+                          {prop.ativo ? "Ativo" : "Inativo"}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => startEdit(prop)}
+                            className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-lg transition-colors"
+                            title="Editar imóvel"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTrigger(prop.id)}
+                            className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-red-400 rounded-lg transition-colors"
+                            title="Excluir imóvel"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={Math.ceil(properties.length / pageSize) || 1}
+              pageSize={pageSize}
+              totalRecords={properties.length}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setCurrentPage(1);
+              }}
+            />
           </div>
         )}
       </div>

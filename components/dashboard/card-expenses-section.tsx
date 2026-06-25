@@ -52,7 +52,6 @@ import { CreditCardForm } from "./credit-card-form";
 const CardInvoiceImport = React.lazy(() => import("./card-invoice-import"));
 import CardInvoicePreview from "./card-invoice-preview";
 import { CardManualEntryForm } from "./card-manual-entry-form";
-import { exportCardInvoicePDF } from "@/lib/pdf-utils";
 
 interface CardExpensesSectionProps {
   userEmail: string;
@@ -1112,7 +1111,10 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
                         totalCreditosEstornos: invoiceItems.filter(i => i.classificacaoCartao === "credito_estorno").reduce((acc, i) => acc + i.valor, 0),
                         status: "aberta" as const
                       };
-                      exportCardInvoicePDF(invoiceObj, invoiceItems, selectedCard, userEmail);
+                      (async () => {
+                        const { exportCardInvoicePDF } = await import("@/lib/pdf-utils");
+                        exportCardInvoicePDF(invoiceObj, invoiceItems, selectedCard, userEmail);
+                      })();
                     }}
                     className="p-2 rounded-xl bg-zinc-950 hover:bg-zinc-900 border border-white/5 hover:border-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer"
                     title="Exportar Fatura em PDF"

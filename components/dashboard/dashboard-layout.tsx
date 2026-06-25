@@ -30,13 +30,6 @@ import {
   CreditCard,
   Wallet
 } from "lucide-react";
-import {
-  exportTransactionsPDF,
-  exportFixedExpensesPDF,
-  exportVariableExpensesPDF,
-  exportOverviewPDF,
-  exportReportsPDF
-} from "@/lib/pdf-utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { 
@@ -52,10 +45,11 @@ import {
   Timestamp,
   increment,
   writeBatch,
-  where
+  where,
+  limit
 } from "firebase/firestore";
 
-import { Transaction, Expense, PropertyCostCenter, BankAccount, Investment, Asset } from "@/types/finance";
+import { Transaction, Expense, PropertyCostCenter, BankAccount, Investment, Asset, CardInvoice } from "@/types/finance";
 import { auth, db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { isAllowedEmail } from "@/lib/auth";
 import { 
@@ -139,14 +133,15 @@ export default function DashboardLayout() {
   // Transactions and Expenses state
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [cardInvoices, setCardInvoices] = useState<CardInvoice[]>([]);
 
   // Banks, Investments and Assets state
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
 
-  // Performance-optimizing session refs
-  const hasGeneratedFutureRecurrences = useRef(false);
+  // Performance-optimizing session state
+  const [hasGeneratedFutureExpenses, setHasGeneratedFutureExpenses] = useState(false);
 
   // Expense/Card Invoice bank payment confirmation modal
   const [paymentBankModalConfig, setPaymentBankModalConfig] = useState<{
@@ -315,9 +310,17 @@ export default function DashboardLayout() {
       return;
     }
 
+    let qLimit = 100;
+    if (activeTab === "overview") {
+      qLimit = 50;
+    } else if (activeTab === "reports") {
+      qLimit = 300;
+    }
+
     const qTx = query(
       collection(db, "financeiro", "geral", "transacoes"),
-      orderBy("data", "desc")
+      orderBy("data", "desc"),
+      limit(qLimit)
     );
     const unsubscribeTx = onSnapshot(qTx, (snapshot) => {
       const txList: Transaction[] = [];
@@ -369,18 +372,23 @@ export default function DashboardLayout() {
       qExp = query(
         collection(db, "financeiro", "geral", "despesas"),
         where("tipo", "==", "fixa"),
-        orderBy("dataVencimento", "asc")
+        limit(200)
       );
     } else if (activeTab === "variable-expenses") {
       qExp = query(
         collection(db, "financeiro", "geral", "despesas"),
         where("tipo", "==", "variavel"),
-        orderBy("dataVencimento", "asc")
+        limit(200)
+      );
+    } else if (activeTab === "overview") {
+      qExp = query(
+        collection(db, "financeiro", "geral", "despesas"),
+        limit(150)
       );
     } else {
       qExp = query(
         collection(db, "financeiro", "geral", "despesas"),
-        orderBy("dataVencimento", "asc")
+        limit(500)
       );
     }
 
@@ -435,7 +443,23 @@ export default function DashboardLayout() {
           saidaGerada: d.saidaGerada ?? false,
         });
       });
-      setExpenses(expList);
+
+      // Filter on client-side
+      let filtered = expList;
+      if (activeTab === "fixed-expenses") {
+        filtered = expList.filter((e) => e.tipo === "fixa");
+      } else if (activeTab === "variable-expenses") {
+        filtered = expList.filter((e) => e.tipo === "variavel");
+      }
+
+      // Sort on client-side: asc by dataVencimento, or fallback to data if dataVencimento is missing
+      filtered.sort((a, b) => {
+        const valA = a.dataVencimento || a.data || "";
+        const valB = b.dataVencimento || b.data || "";
+        return valA.localeCompare(valB);
+      });
+
+      setExpenses(filtered);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/despesas");
     });
@@ -533,13 +557,63 @@ export default function DashboardLayout() {
     };
   }, [currentUser, activeTab]);
 
-  // Auto-generate future recurring expenses up to 12 months ahead to support future views
+  // E. Card Invoices
   useEffect(() => {
-    if (activeTab === "fixed-expenses" && expenses.length > 0 && currentUser?.email && !hasGeneratedFutureRecurrences.current) {
-      hasGeneratedFutureRecurrences.current = true;
+    if (!currentUser) return;
+
+    const neededTabs = ["overview", "card-expenses", "reports"];
+    if (!neededTabs.includes(activeTab)) {
+      setCardInvoices([]);
+      return;
+    }
+
+    const qInv = query(
+      collection(db, "financeiro", "geral", "faturasCartao")
+    );
+    const unsubscribeInv = onSnapshot(qInv, (snapshot) => {
+      const list: CardInvoice[] = [];
+      snapshot.forEach((doc) => {
+        const d = doc.data();
+        list.push({
+          id: doc.id,
+          cartaoId: d.cartaoId || "",
+          cartaoNome: d.cartaoNome || "",
+          banco: d.banco || "",
+          finalCartao: d.finalCartao || "",
+          competencia: d.competencia || "",
+          dataInicioCiclo: parseTimestampToString(d.dataInicioCiclo),
+          dataFimCiclo: parseTimestampToString(d.dataFimCiclo),
+          dataVencimento: parseTimestampToString(d.dataVencimento),
+          valorTotal: d.valorTotal || 0,
+          totalFixasCartao: d.totalFixasCartao || 0,
+          totalVariaveisCartao: d.totalVariaveisCartao || 0,
+          totalPagamentos: d.totalPagamentos || 0,
+          totalCreditosEstornos: d.totalCreditosEstornos || 0,
+          status: d.status || "aberta",
+          pagoEm: parseTimestampToString(d.pagoEm),
+          transacaoGeradaId: d.transacaoGeradaId || null,
+          bancoPagamentoId: d.bancoPagamentoId || null,
+          bancoPagamentoNome: d.bancoPagamentoNome || null,
+          criadoEm: parseTimestampToString(d.criadoEm),
+          atualizadoEm: parseTimestampToString(d.atualizadoEm),
+          criadoPorEmail: d.criadoPorEmail || "",
+        });
+      });
+      setCardInvoices(list);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, "financeiro/geral/faturasCartao");
+    });
+
+    return () => unsubscribeInv();
+  }, [currentUser, activeTab]);
+
+  // Auto-generate future recurring expenses up to 6 months ahead to support future views
+  useEffect(() => {
+    if (activeTab === "fixed-expenses" && expenses.length > 0 && currentUser?.email && !hasGeneratedFutureExpenses) {
+      setHasGeneratedFutureExpenses(true);
       generateFutureRecurringExpenses(expenses, currentUser.email);
     }
-  }, [activeTab, expenses, currentUser]);
+  }, [activeTab, expenses, currentUser, hasGeneratedFutureExpenses]);
 
   // Filters calculation
   // 1. Transactions filtered
@@ -722,8 +796,15 @@ export default function DashboardLayout() {
     return dateStr;
   };
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     const userEmail = currentUser?.email || "";
+    const {
+      exportTransactionsPDF,
+      exportFixedExpensesPDF,
+      exportVariableExpensesPDF,
+      exportOverviewPDF,
+      exportReportsPDF
+    } = await import("@/lib/pdf-utils");
     
     if (activeTab === "transactions") {
       const parts = [];
@@ -1438,7 +1519,7 @@ export default function DashboardLayout() {
         alert("Parcelamento quitado com sucesso.");
       }
       if (expense.recorrente) {
-        hasGeneratedFutureRecurrences.current = false;
+        setHasGeneratedFutureExpenses(false);
       }
     } catch (err) {
       console.error(err);
@@ -2077,7 +2158,13 @@ export default function DashboardLayout() {
 
                 <div className="space-y-6">
                   {/* Intelligent alerts panel */}
-                  <PaymentAlerts expenses={expenses} />
+                  <PaymentAlerts 
+                    expenses={expenses} 
+                    transactions={transactions}
+                    cardInvoices={cardInvoices}
+                    banks={banks}
+                    selectedCycle={selectedMonth}
+                  />
                   
                   {/* Session User information */}
                   <div className="bg-zinc-900/20 border border-white/5 rounded-2xl p-6 backdrop-blur-md space-y-4">

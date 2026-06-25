@@ -10,7 +10,6 @@ import {
   Layers, Percent, CheckCircle2, ShieldAlert, BarChart3, PieChart as PieIcon, LineChart as LineIcon, Info, Filter, RefreshCw, FileText
 } from "lucide-react";
 import { Transaction, Expense } from "@/types/finance";
-import { exportReportsPDF } from "@/lib/pdf-utils";
 
 interface ReportsSectionProps {
   transactions: Transaction[];
@@ -72,7 +71,8 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
     setReportImovel("todos");
   };
 
-  const handleLocalExportPDF = () => {
+  const handleLocalExportPDF = async () => {
+    const { exportReportsPDF } = await import("@/lib/pdf-utils");
     exportReportsPDF(
       filteredTxs,
       filteredExps,

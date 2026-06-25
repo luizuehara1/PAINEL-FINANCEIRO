@@ -8,16 +8,22 @@ import { Expense } from "@/types/finance";
 export async function generateFutureRecurringExpenses(
   expenses: Expense[],
   userEmail: string,
-  monthsAhead = 12
+  monthsAhead = 6
 ) {
   if (!userEmail || expenses.length === 0) return;
 
-  // Filter unique active recurrence groups by looking at current recurrences
+  // Filter unique active recurrence groups by looking at current recurrences.
+  // CRITICAL SAFEGUARD: Only generate from root expenses (where despesaOrigemId is falsy)
+  // to avoid recursive/chain-reaction generation from already-generated future expenses.
   const activeRecurrents = expenses.filter(
-    (e) => e.tipo === "fixa" && e.recorrente && e.recorrenciaAtiva && !e.baixadaCompletamente && e.grupoRecorrenciaId
+    (e) => e.tipo === "fixa" && e.recorrente && e.recorrenciaAtiva && !e.baixadaCompletamente && e.grupoRecorrenciaId && !e.despesaOrigemId
   );
 
   if (activeRecurrents.length === 0) return;
+
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth() + 1; // 1-12
 
   const batch = writeBatch(db);
   let hasUpdates = false;
@@ -35,6 +41,13 @@ export async function generateFutureRecurringExpenses(
       while (month > 12) {
         month -= 12;
         year += 1;
+      }
+
+      // SECONDARY SAFEGUARD: Limit to at most 6 months ahead from today
+      // to completely prevent any potential database bloat or forward propagation.
+      const monthsDiff = (year - currentYear) * 12 + (month - currentMonth);
+      if (monthsDiff > 6) {
+        continue;
       }
       
       const lastDay = new Date(year, month, 0).getDate();

@@ -17,7 +17,6 @@ import {
 import { BankManager } from "./bank-manager";
 import { InvestmentManager } from "./investment-manager";
 import { AssetsManager } from "./assets-manager";
-import { exportApplicationsPDF } from "@/lib/pdf-utils";
 
 interface ApplicationsSectionProps {
   userEmail: string;
@@ -122,7 +121,8 @@ export function ApplicationsSection({ userEmail }: ApplicationsSectionProps) {
 
   const consolidatedTotal = totalBanks + totalInvested + totalAssets;
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
+    const { exportApplicationsPDF } = await import("@/lib/pdf-utils");
     exportApplicationsPDF(banks, investments, assets, userEmail);
   };
 

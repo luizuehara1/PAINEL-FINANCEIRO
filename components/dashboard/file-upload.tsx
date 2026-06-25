@@ -41,6 +41,9 @@ export default function FileUpload({
 
   // Process selected file
   const processFile = (file: File) => {
+    // Add console log for testing file metadata without content
+    console.log("Arquivo selecionado:", file.name, file.size, file.type);
+
     const allowedTypes = [
       "image/jpeg",
       "image/jpg",

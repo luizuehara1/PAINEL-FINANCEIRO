@@ -2,7 +2,6 @@
 
 import React, { useState, useRef } from "react";
 import { Upload, File, AlertCircle, RefreshCw, X, HelpCircle, FileSpreadsheet, FileText, CheckCircle2 } from "lucide-react";
-import { parseCardInvoiceFile } from "@/lib/card-import-parser";
 import { ImportInvoiceResult } from "@/types/finance";
 
 interface CardInvoiceImportProps {
@@ -21,6 +20,7 @@ export default function CardInvoiceImport({ onParsed, onCancel }: CardInvoiceImp
     setError(null);
 
     try {
+      const { parseCardInvoiceFile } = await import("@/lib/card-import-parser");
       const result = await parseCardInvoiceFile(file);
       if (!result.items || result.items.length === 0) {
         throw new Error(
