@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -51,7 +51,8 @@ import {
   serverTimestamp, 
   Timestamp,
   increment,
-  writeBatch
+  writeBatch,
+  where
 } from "firebase/firestore";
 
 import { Transaction, Expense, PropertyCostCenter, BankAccount, Investment, Asset } from "@/types/finance";
@@ -143,6 +144,9 @@ export default function DashboardLayout() {
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
+
+  // Performance-optimizing session refs
+  const hasGeneratedFutureRecurrences = useRef(false);
 
   // Expense/Card Invoice bank payment confirmation modal
   const [paymentBankModalConfig, setPaymentBankModalConfig] = useState<{
@@ -301,10 +305,16 @@ export default function DashboardLayout() {
   }, []);
 
   // 2. Load Real-Time data from Firestore (NO SEEDING, ONLY REAL DATA)
+  // A. Transactions (only when needed)
   useEffect(() => {
     if (!currentUser) return;
 
-    // A. Real-Time Transactions query
+    const neededTabs = ["overview", "transactions", "reports"];
+    if (!neededTabs.includes(activeTab)) {
+      setTransactions([]); // Clear state when closing tab to free memory
+      return;
+    }
+
     const qTx = query(
       collection(db, "financeiro", "geral", "transacoes"),
       orderBy("data", "desc")
@@ -341,11 +351,39 @@ export default function DashboardLayout() {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/transacoes");
     });
 
-    // B. Real-Time Expenses query
-    const qExp = query(
-      collection(db, "financeiro", "geral", "despesas"),
-      orderBy("dataVencimento", "asc")
-    );
+    return () => unsubscribeTx();
+  }, [currentUser, activeTab]);
+
+  // B. Expenses (filtered specifically by tab to optimize querying and network reads)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const neededTabs = ["overview", "fixed-expenses", "variable-expenses", "reports"];
+    if (!neededTabs.includes(activeTab)) {
+      setExpenses([]); // Clear state when closing tab
+      return;
+    }
+
+    let qExp;
+    if (activeTab === "fixed-expenses") {
+      qExp = query(
+        collection(db, "financeiro", "geral", "despesas"),
+        where("tipo", "==", "fixa"),
+        orderBy("dataVencimento", "asc")
+      );
+    } else if (activeTab === "variable-expenses") {
+      qExp = query(
+        collection(db, "financeiro", "geral", "despesas"),
+        where("tipo", "==", "variavel"),
+        orderBy("dataVencimento", "asc")
+      );
+    } else {
+      qExp = query(
+        collection(db, "financeiro", "geral", "despesas"),
+        orderBy("dataVencimento", "asc")
+      );
+    }
+
     const unsubscribeExp = onSnapshot(qExp, (snapshot) => {
       const expList: Expense[] = [];
       snapshot.forEach((doc) => {
@@ -364,8 +402,6 @@ export default function DashboardLayout() {
           pagoEm: d.pagoEm ? parseTimestampToString(d.pagoEm) : undefined,
           criadoEm: parseTimestampToString(d.criadoEm || d.dataVencimento),
           criadoPorEmail: d.criadoPorEmail || "",
-          
-          // Smart recurrence fields mapping
           diaVencimento: d.diaVencimento || undefined,
           competencia: d.competencia || "",
           recorrente: d.recorrente ?? false,
@@ -375,23 +411,17 @@ export default function DashboardLayout() {
           baixadaCompletamente: d.baixadaCompletamente ?? false,
           baixadaEm: d.baixadaEm ? parseTimestampToString(d.baixadaEm) : null,
           motivoBaixa: d.motivoBaixa || null,
-
           imovelId: d.imovelId || null,
           imovelNome: d.imovelNome || null,
           centroCustoTipo: d.centroCustoTipo || null,
-
           notaUrl: d.notaUrl || null,
           notaPublicId: d.notaPublicId || null,
           notaTipo: d.notaTipo || null,
           notaNome: d.notaNome || null,
-
-          // Credit card fields
           origem: d.origem || undefined,
           cartaoId: d.cartaoId || null,
           faturaId: d.faturaId || null,
           itemCartaoId: d.itemCartaoId || null,
-
-          // Installment fields
           parcelado: d.parcelado ?? false,
           parcelaAtual: d.parcelaAtual || undefined,
           totalParcelas: d.totalParcelas || undefined,
@@ -401,8 +431,6 @@ export default function DashboardLayout() {
           parcelamentoAtivo: d.parcelamentoAtivo ?? false,
           parcelamentoQuitado: d.parcelamentoQuitado ?? false,
           quitadoEm: d.quitadoEm || null,
-
-          // Automated transaction links
           transacaoGeradaId: d.transacaoGeradaId || null,
           saidaGerada: d.saidaGerada ?? false,
         });
@@ -411,6 +439,19 @@ export default function DashboardLayout() {
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/despesas");
     });
+
+    return () => unsubscribeExp();
+  }, [currentUser, activeTab]);
+
+  // C. Properties / Cost Centers
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const neededTabs = ["overview", "transactions", "fixed-expenses", "variable-expenses", "registrations"];
+    if (!neededTabs.includes(activeTab)) {
+      setLayoutImoveis([]);
+      return;
+    }
 
     const qLayoutImoveis = query(
       collection(db, "financeiro", "geral", "imoveis"),
@@ -437,9 +478,22 @@ export default function DashboardLayout() {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/imoveis");
     });
 
-    const qBanks = query(
-      collection(db, "financeiro", "geral", "bancos")
-    );
+    return () => unsubscribeImoveis();
+  }, [currentUser, activeTab]);
+
+  // D. Banks, Investments & Assets
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const neededTabs = ["overview", "applications"];
+    if (!neededTabs.includes(activeTab)) {
+      setBanks([]);
+      setInvestments([]);
+      setAssets([]);
+      return;
+    }
+
+    const qBanks = query(collection(db, "financeiro", "geral", "bancos"));
     const unsubscribeBanks = onSnapshot(qBanks, (snapshot) => {
       const list: BankAccount[] = [];
       snapshot.forEach((doc) => {
@@ -450,9 +504,7 @@ export default function DashboardLayout() {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/bancos");
     });
 
-    const qInvs = query(
-      collection(db, "financeiro", "geral", "investimentos")
-    );
+    const qInvs = query(collection(db, "financeiro", "geral", "investimentos"));
     const unsubscribeInvs = onSnapshot(qInvs, (snapshot) => {
       const list: Investment[] = [];
       snapshot.forEach((doc) => {
@@ -463,9 +515,7 @@ export default function DashboardLayout() {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/investimentos");
     });
 
-    const qAssets = query(
-      collection(db, "financeiro", "geral", "patrimonios")
-    );
+    const qAssets = query(collection(db, "financeiro", "geral", "patrimonios"));
     const unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
       const list: Asset[] = [];
       snapshot.forEach((doc) => {
@@ -477,142 +527,164 @@ export default function DashboardLayout() {
     });
 
     return () => {
-      unsubscribeTx();
-      unsubscribeExp();
-      unsubscribeImoveis();
       unsubscribeBanks();
       unsubscribeInvs();
       unsubscribeAssets();
     };
-  }, [currentUser]);
+  }, [currentUser, activeTab]);
 
   // Auto-generate future recurring expenses up to 12 months ahead to support future views
   useEffect(() => {
-    if (expenses.length > 0 && currentUser?.email) {
+    if (activeTab === "fixed-expenses" && expenses.length > 0 && currentUser?.email && !hasGeneratedFutureRecurrences.current) {
+      hasGeneratedFutureRecurrences.current = true;
       generateFutureRecurringExpenses(expenses, currentUser.email);
     }
-  }, [expenses.length, currentUser?.email]);
+  }, [activeTab, expenses, currentUser]);
 
   // Filters calculation
   // 1. Transactions filtered
-  const filteredTransactions = transactions.filter((t) => {
-    if (selectedMonth && !t.data.startsWith(selectedMonth)) return false;
-    if (txDateStart && t.data < txDateStart) return false;
-    if (txDateEnd && t.data > txDateEnd) return false;
-    if (txType !== "todos" && t.tipo !== txType) return false;
-    if (txCategory !== "todas" && t.categoria !== txCategory) return false;
-    if (txPaymentMethod !== "todos" && t.formaPagamento !== txPaymentMethod) return false;
-    return true;
-  });
+  const filteredTransactions = React.useMemo(() => {
+    return transactions.filter((t) => {
+      if (selectedMonth && !t.data.startsWith(selectedMonth)) return false;
+      if (txDateStart && t.data < txDateStart) return false;
+      if (txDateEnd && t.data > txDateEnd) return false;
+      if (txType !== "todos" && t.tipo !== txType) return false;
+      if (txCategory !== "todas" && t.categoria !== txCategory) return false;
+      if (txPaymentMethod !== "todos" && t.formaPagamento !== txPaymentMethod) return false;
+      return true;
+    });
+  }, [transactions, selectedMonth, txDateStart, txDateEnd, txType, txCategory, txPaymentMethod]);
 
   // 2. Fixed Expenses filtered
-  const availableCycles = getAvailableCyclesFromExpenses(expenses);
+  const availableCycles = React.useMemo(() => {
+    return getAvailableCyclesFromExpenses(expenses);
+  }, [expenses]);
 
-  const filteredFixedExpenses = expenses.filter((e) => {
-    if (e.tipo !== "fixa") return false;
+  const filteredFixedExpenses = React.useMemo(() => {
+    return expenses.filter((e) => {
+      if (e.tipo !== "fixa") return false;
 
-    // Apply global cycle filter (selectedMonth)
-    if (selectedMonth) {
-      let comp = e.competencia;
-      if (!comp && e.dataVencimento) {
-        comp = getCompetenceFromDateStr(e.dataVencimento);
-      }
-      if (!comp && e.data) {
-        comp = getCompetenceFromDateStr(e.data);
-      }
-      if (comp !== selectedMonth) return false;
+      // Apply global cycle filter (selectedMonth)
+      if (selectedMonth) {
+        let comp = e.competencia;
+        if (!comp && e.dataVencimento) {
+          comp = getCompetenceFromDateStr(e.dataVencimento);
+        }
+        if (!comp && e.data) {
+          comp = getCompetenceFromDateStr(e.data);
+        }
+        if (comp !== selectedMonth) return false;
 
-      // When a specific cycle is selected, we only apply the period filter if it is personalized
-      if (fixedPeriodFilter === "personalizado") {
-        if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
-        if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
-      }
-    } else {
-      // Apply standard period filter
-      if (fixedPeriodFilter === "personalizado") {
-        if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
-        if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
+        // When a specific cycle is selected, we only apply the period filter if it is personalized
+        if (fixedPeriodFilter === "personalizado") {
+          if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
+          if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
+        }
       } else {
-        const { start, end } = getDateRangeFromPeriodFilter(fixedPeriodFilter, todayStr);
-        if (start && e.dataVencimento < start) return false;
-        if (end && e.dataVencimento > end) return false;
+        // Apply standard period filter
+        if (fixedPeriodFilter === "personalizado") {
+          if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
+          if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
+        } else {
+          const { start, end } = getDateRangeFromPeriodFilter(fixedPeriodFilter, todayStr);
+          if (start && e.dataVencimento < start) return false;
+          if (end && e.dataVencimento > end) return false;
+        }
       }
-    }
 
-    if (fixedStatus !== "todos") {
-      if (fixedStatus === "pago") {
-        if (e.status !== "pago") return false;
-      } else if (fixedStatus === "pendente") {
-        if (e.status !== "pendente" || (e.dataVencimento && e.dataVencimento < todayStr)) return false;
-      } else if (fixedStatus === "vencida") {
-        if (e.status !== "pendente" || (e.dataVencimento && e.dataVencimento >= todayStr)) return false;
+      if (fixedStatus !== "todos") {
+        if (fixedStatus === "pago") {
+          if (e.status !== "pago") return false;
+        } else if (fixedStatus === "pendente") {
+          if (e.status !== "pendente" || (e.dataVencimento && e.dataVencimento < todayStr)) return false;
+        } else if (fixedStatus === "vencida") {
+          if (e.status !== "pendente" || (e.dataVencimento && e.dataVencimento >= todayStr)) return false;
+        }
       }
-    }
-    if (fixedCategory !== "todas" && e.categoria !== fixedCategory) return false;
-    if (fixedPaymentMethod !== "todos" && e.formaPagamento !== fixedPaymentMethod) return false;
-    
-    // Property Filter
-    if (fixedImovelFilter !== "todos") {
-      if (fixedImovelFilter === "sem_imovel") {
-        if (e.imovelId) return false;
-      } else {
-        if (e.imovelId !== fixedImovelFilter) return false;
+      if (fixedCategory !== "todas" && e.categoria !== fixedCategory) return false;
+      if (fixedPaymentMethod !== "todos" && e.formaPagamento !== fixedPaymentMethod) return false;
+      
+      // Property Filter
+      if (fixedImovelFilter !== "todos") {
+        if (fixedImovelFilter === "sem_imovel") {
+          if (e.imovelId) return false;
+        } else {
+          if (e.imovelId !== fixedImovelFilter) return false;
+        }
       }
-    }
 
-    // Recurrence filter
-    if (fixedRecurrenceFilter !== "todos") {
-      if (fixedRecurrenceFilter === "ativas") {
-        if (!e.recorrente || !e.recorrenciaAtiva || e.baixadaCompletamente) return false;
-      } else if (fixedRecurrenceFilter === "baixadas") {
-        if (!e.baixadaCompletamente) return false;
-      } else if (fixedRecurrenceFilter === "nao-recorrentes") {
-        if (e.recorrente) return false;
+      // Recurrence filter
+      if (fixedRecurrenceFilter !== "todos") {
+        if (fixedRecurrenceFilter === "ativas") {
+          if (!e.recorrente || !e.recorrenciaAtiva || e.baixadaCompletamente) return false;
+        } else if (fixedRecurrenceFilter === "baixadas") {
+          if (!e.baixadaCompletamente) return false;
+        } else if (fixedRecurrenceFilter === "nao-recorrentes") {
+          if (e.recorrente) return false;
+        }
       }
-    }
 
-    // Parcelamento filter
-    if (fixedParcelamentoFilter !== "todos") {
-      if (fixedParcelamentoFilter === "a_vista") {
-        if (e.parcelado) return false;
-      } else if (fixedParcelamentoFilter === "parcelado") {
-        if (!e.parcelado) return false;
-      } else if (fixedParcelamentoFilter === "em_andamento") {
-        if (!e.parcelado || e.parcelamentoAtivo !== true) return false;
-      } else if (fixedParcelamentoFilter === "quitado") {
-        if (!e.parcelado || e.parcelamentoQuitado !== true) return false;
+      // Parcelamento filter
+      if (fixedParcelamentoFilter !== "todos") {
+        if (fixedParcelamentoFilter === "a_vista") {
+          if (e.parcelado) return false;
+        } else if (fixedParcelamentoFilter === "parcelado") {
+          if (!e.parcelado) return false;
+        } else if (fixedParcelamentoFilter === "em_andamento") {
+          if (!e.parcelado || e.parcelamentoAtivo !== true) return false;
+        } else if (fixedParcelamentoFilter === "quitado") {
+          if (!e.parcelado || e.parcelamentoQuitado !== true) return false;
+        }
       }
-    }
-    return true;
-  });
-
-  // Dynamic cycle debug logs
-  console.log("Despesas fixas carregadas:", expenses.filter(e => e.tipo === "fixa"));
-  console.log("Ciclos disponíveis:", availableCycles);
-  console.log("Ciclo selecionado:", selectedMonth);
-  console.log("Despesas filtradas por ciclo:", filteredFixedExpenses);
+      return true;
+    });
+  }, [
+    expenses,
+    selectedMonth,
+    fixedPeriodFilter,
+    fixedVencimentoStart,
+    fixedVencimentoEnd,
+    todayStr,
+    fixedStatus,
+    fixedCategory,
+    fixedPaymentMethod,
+    fixedImovelFilter,
+    fixedRecurrenceFilter,
+    fixedParcelamentoFilter
+  ]);
 
   // 3. Variable Expenses filtered
-  const filteredVariableExpenses = expenses.filter((e) => {
-    if (e.tipo !== "variavel") return false;
-    if (selectedMonth && !e.data.startsWith(selectedMonth)) return false;
-    if (variableDateStart && e.data < variableDateStart) return false;
-    if (variableDateEnd && e.data > variableDateEnd) return false;
-    if (variableStatus !== "todos" && e.status !== variableStatus) return false;
-    if (variableCategory !== "todas" && e.categoria !== variableCategory) return false;
-    if (variablePaymentMethod !== "todos" && e.formaPagamento !== variablePaymentMethod) return false;
+  const filteredVariableExpenses = React.useMemo(() => {
+    return expenses.filter((e) => {
+      if (e.tipo !== "variavel") return false;
+      if (selectedMonth && !e.data.startsWith(selectedMonth)) return false;
+      if (variableDateStart && e.data < variableDateStart) return false;
+      if (variableDateEnd && e.data > variableDateEnd) return false;
+      if (variableStatus !== "todos" && e.status !== variableStatus) return false;
+      if (variableCategory !== "todas" && e.categoria !== variableCategory) return false;
+      if (variablePaymentMethod !== "todos" && e.formaPagamento !== variablePaymentMethod) return false;
 
-    // Property Filter
-    if (variableImovelFilter !== "todos") {
-      if (variableImovelFilter === "sem_imovel") {
-        if (e.imovelId) return false;
-      } else {
-        if (e.imovelId !== variableImovelFilter) return false;
+      // Property Filter
+      if (variableImovelFilter !== "todos") {
+        if (variableImovelFilter === "sem_imovel") {
+          if (e.imovelId) return false;
+        } else {
+          if (e.imovelId !== variableImovelFilter) return false;
+        }
       }
-    }
 
-    return true;
-  });
+      return true;
+    });
+  }, [
+    expenses,
+    selectedMonth,
+    variableDateStart,
+    variableDateEnd,
+    variableStatus,
+    variableCategory,
+    variablePaymentMethod,
+    variableImovelFilter
+  ]);
 
   // Clear filters helper
   const handleClearFilters = () => {
@@ -1364,6 +1436,9 @@ export default function DashboardLayout() {
       const result = await confirmExpensePaymentAndUpdateBank(expense, selectedBankId, userEmail);
       if (result && result.groupFullyPaid) {
         alert("Parcelamento quitado com sucesso.");
+      }
+      if (expense.recorrente) {
+        hasGeneratedFutureRecurrences.current = false;
       }
     } catch (err) {
       console.error(err);

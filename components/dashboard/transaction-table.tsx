@@ -12,9 +12,23 @@ interface TransactionTableProps {
 }
 
 export default function TransactionTable({ transactions, onEdit, onDelete }: TransactionTableProps) {
+  const [inputValue, setInputValue] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<"todos" | "entrada" | "saida">("todos");
   const [selectedNote, setSelectedNote] = useState<{ url: string; tipo: string; nome: string } | null>(null);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Search debounce
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setSearchTerm(inputValue);
+      setCurrentPage(1); // Reset to page 1 on new search
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [inputValue]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
@@ -30,16 +44,28 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
     return `${day}/${month}/${year}`;
   };
 
-  const filteredTransactions = transactions.filter((t) => {
-    const matchesSearch =
-      t.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.categoria.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.descricao.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesType = typeFilter === "todos" || t.tipo === typeFilter;
+  const filteredTransactions = React.useMemo(() => {
+    return transactions.filter((t) => {
+      const matchesSearch =
+        t.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        t.categoria.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        t.descricao.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesType = typeFilter === "todos" || t.tipo === typeFilter;
 
-    return matchesSearch && matchesType;
-  });
+      return matchesSearch && matchesType;
+    });
+  }, [transactions, searchTerm, typeFilter]);
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredTransactions.length / pageSize) || 1;
+  const activePage = Math.min(currentPage, totalPages);
+  const displayedTransactions = React.useMemo(() => {
+    return filteredTransactions.slice(
+      (activePage - 1) * pageSize,
+      activePage * pageSize
+    );
+  }, [filteredTransactions, activePage, pageSize]);
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-zinc-900/40 border border-white/5 backdrop-blur-md p-6">
@@ -65,8 +91,8 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
             <Search className="absolute left-3 w-4 h-4 text-zinc-500" />
             <input
               type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
               placeholder="Pesquisar..."
               className="bg-zinc-950 border border-zinc-800 focus:border-emerald-500/50 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all w-full sm:w-48"
             />
@@ -75,7 +101,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
           {/* Type Filter */}
           <div className="flex bg-zinc-950 border border-zinc-800 rounded-xl p-0.5">
             <button
-              onClick={() => setTypeFilter("todos")}
+              onClick={() => { setTypeFilter("todos"); setCurrentPage(1); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                 typeFilter === "todos" ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-300"
               }`}
@@ -83,7 +109,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
               Todos
             </button>
             <button
-              onClick={() => setTypeFilter("entrada")}
+              onClick={() => { setTypeFilter("entrada"); setCurrentPage(1); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                 typeFilter === "entrada" ? "bg-emerald-500/10 text-emerald-400" : "text-zinc-500 hover:text-zinc-300"
               }`}
@@ -91,7 +117,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
               Entradas
             </button>
             <button
-              onClick={() => setTypeFilter("saida")}
+              onClick={() => { setTypeFilter("saida"); setCurrentPage(1); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                 typeFilter === "saida" ? "bg-red-500/10 text-red-400" : "text-zinc-500 hover:text-zinc-300"
               }`}
@@ -126,7 +152,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {filteredTransactions.map((t) => (
+              {displayedTransactions.map((t) => (
                 <tr 
                   key={t.id} 
                   className="hover:bg-white/[0.02] text-xs text-zinc-300 transition-colors"
@@ -249,10 +275,48 @@ export default function TransactionTable({ transactions, onEdit, onDelete }: Tra
         )}
       </div>
 
-      {/* Footer Info */}
-      <div className="mt-4 pt-4 border-t border-zinc-800/40 flex justify-between items-center text-[11px] text-zinc-500">
-        <span>Mostrando {filteredTransactions.length} transações</span>
-        <span>Sincronizado com Firestore</span>
+      {/* Pagination & Footer Info */}
+      <div className="mt-4 pt-4 border-t border-zinc-800/40 flex flex-col sm:flex-row justify-between items-center gap-4 text-[11px] text-zinc-500">
+        <div className="flex items-center gap-2">
+          <span>Mostrar</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-zinc-400 outline-none focus:border-emerald-500/30"
+          >
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+          </select>
+          <span>por página</span>
+          <span className="ml-2 text-zinc-800">|</span>
+          <span>
+            Mostrando {filteredTransactions.length === 0 ? 0 : (activePage - 1) * pageSize + 1} - {Math.min(activePage * pageSize, filteredTransactions.length)} de {filteredTransactions.length} registros
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+            disabled={activePage === 1}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white disabled:opacity-40 disabled:hover:text-zinc-400 transition-all cursor-pointer"
+          >
+            Anterior
+          </button>
+          <span className="px-3 py-1.5 text-zinc-400 font-mono">
+            Pág. {activePage} de {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+            disabled={activePage === totalPages}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white disabled:opacity-40 disabled:hover:text-zinc-400 transition-all cursor-pointer"
+          >
+            Próxima
+          </button>
+        </div>
       </div>
 
       {/* Note Viewer Modal */}

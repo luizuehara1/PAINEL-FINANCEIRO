@@ -35,11 +35,25 @@ export default function ExpenseTable({
   onCloseRecurring,
   onCancelPayment
 }: ExpenseTableProps) {
+  const [inputValue, setInputValue] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<"todas" | "fixa" | "variavel">("todas");
   const [statusFilter, setStatusFilter] = useState<"todos" | "pago" | "pendente" | "vencido" | "baixada">("todos");
   const [installmentFilter, setInstallmentFilter] = useState<"todos" | "a_vista" | "parcelado" | "em_andamento" | "quitado">("todos");
   const [selectedNote, setSelectedNote] = useState<{ url: string; tipo: string; nome: string } | null>(null);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Search debounce
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setSearchTerm(inputValue);
+      setCurrentPage(1); // Reset to page 1 on new search
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [inputValue]);
 
   // State for "Baixar completamente" modal
   const [baixarModalOpen, setBaixarModalOpen] = useState(false);
@@ -121,38 +135,50 @@ export default function ExpenseTable({
     setBaixarModalOpen(false);
   };
 
-  const filteredExpenses = expenses.filter((e) => {
-    const matchesSearch =
-      e.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.categoria.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (e.descricao || "").toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredExpenses = React.useMemo(() => {
+    return expenses.filter((e) => {
+      const matchesSearch =
+        e.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        e.categoria.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (e.descricao || "").toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesType = typeFilter === "todas" || e.tipo === typeFilter;
+      const matchesType = typeFilter === "todas" || e.tipo === typeFilter;
 
-    let matchesStatus = true;
-    if (statusFilter === "pago") {
-      matchesStatus = e.status === "pago" && !e.baixadaCompletamente;
-    } else if (statusFilter === "pendente") {
-      matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && (e.tipo !== "fixa" || e.dataVencimento >= todayStr);
-    } else if (statusFilter === "vencido") {
-      matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && e.tipo === "fixa" && e.dataVencimento < todayStr;
-    } else if (statusFilter === "baixada") {
-      matchesStatus = !!e.baixadaCompletamente;
-    }
+      let matchesStatus = true;
+      if (statusFilter === "pago") {
+        matchesStatus = e.status === "pago" && !e.baixadaCompletamente;
+      } else if (statusFilter === "pendente") {
+        matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && (e.tipo !== "fixa" || e.dataVencimento >= todayStr);
+      } else if (statusFilter === "vencido") {
+        matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && e.tipo === "fixa" && e.dataVencimento < todayStr;
+      } else if (statusFilter === "baixada") {
+        matchesStatus = !!e.baixadaCompletamente;
+      }
 
-    let matchesInstallment = true;
-    if (installmentFilter === "a_vista") {
-      matchesInstallment = !e.parcelado;
-    } else if (installmentFilter === "parcelado") {
-      matchesInstallment = !!e.parcelado;
-    } else if (installmentFilter === "em_andamento") {
-      matchesInstallment = !!e.parcelado && e.parcelamentoAtivo === true;
-    } else if (installmentFilter === "quitado") {
-      matchesInstallment = !!e.parcelado && e.parcelamentoQuitado === true;
-    }
+      let matchesInstallment = true;
+      if (installmentFilter === "a_vista") {
+        matchesInstallment = !e.parcelado;
+      } else if (installmentFilter === "parcelado") {
+        matchesInstallment = !!e.parcelado;
+      } else if (installmentFilter === "em_andamento") {
+        matchesInstallment = !!e.parcelado && e.parcelamentoAtivo === true;
+      } else if (installmentFilter === "quitado") {
+        matchesInstallment = !!e.parcelado && e.parcelamentoQuitado === true;
+      }
 
-    return matchesSearch && matchesType && matchesStatus && matchesInstallment;
-  });
+      return matchesSearch && matchesType && matchesStatus && matchesInstallment;
+    });
+  }, [expenses, searchTerm, typeFilter, statusFilter, installmentFilter, todayStr]);
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredExpenses.length / pageSize) || 1;
+  const activePage = Math.min(currentPage, totalPages);
+  const displayedExpenses = React.useMemo(() => {
+    return filteredExpenses.slice(
+      (activePage - 1) * pageSize,
+      activePage * pageSize
+    );
+  }, [filteredExpenses, activePage, pageSize]);
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-zinc-900/40 border border-white/5 backdrop-blur-md p-6">
@@ -178,8 +204,8 @@ export default function ExpenseTable({
             <Search className="absolute left-3 w-4 h-4 text-zinc-500" />
             <input
               type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
               placeholder="Filtrar despesas..."
               className="bg-zinc-950 border border-zinc-800 focus:border-emerald-500/50 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all w-full sm:w-48"
             />
@@ -188,7 +214,7 @@ export default function ExpenseTable({
           {/* Type Filter */}
           <select
             value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as any)}
+            onChange={(e) => { setTypeFilter(e.target.value as any); setCurrentPage(1); }}
             className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none transition-all cursor-pointer focus:border-emerald-500/50"
           >
             <option value="todas">Todas as Despesas</option>
@@ -199,7 +225,7 @@ export default function ExpenseTable({
           {/* Status Filter */}
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
+            onChange={(e) => { setStatusFilter(e.target.value as any); setCurrentPage(1); }}
             className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none transition-all cursor-pointer focus:border-emerald-500/50"
           >
             <option value="todos">Todos os Status</option>
@@ -212,7 +238,7 @@ export default function ExpenseTable({
           {/* Parcelamento Filter */}
           <select
             value={installmentFilter}
-            onChange={(e) => setInstallmentFilter(e.target.value as any)}
+            onChange={(e) => { setInstallmentFilter(e.target.value as any); setCurrentPage(1); }}
             className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none transition-all cursor-pointer focus:border-emerald-500/50"
           >
             <option value="todos">Parcelamento: Todos</option>
@@ -248,7 +274,7 @@ export default function ExpenseTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {filteredExpenses.map((e) => {
+              {displayedExpenses.map((e) => {
                 const statusDetails = getStatusDetails(e);
                 const isFixed = e.tipo === "fixa";
                 const dateToShow = isFixed ? e.dataVencimento : e.data;
@@ -472,10 +498,48 @@ export default function ExpenseTable({
         )}
       </div>
 
-      {/* Footer Info */}
-      <div className="mt-4 pt-4 border-t border-zinc-800/40 flex justify-between items-center text-[11px] text-zinc-500">
-        <span>Mostrando {filteredExpenses.length} despesas</span>
-        <span>Sincronizado com Firestore</span>
+      {/* Pagination & Footer Info */}
+      <div className="mt-4 pt-4 border-t border-zinc-800/40 flex flex-col sm:flex-row justify-between items-center gap-4 text-[11px] text-zinc-500">
+        <div className="flex items-center gap-2">
+          <span>Mostrar</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-zinc-400 outline-none focus:border-emerald-500/30"
+          >
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+          </select>
+          <span>por página</span>
+          <span className="ml-2 text-zinc-800">|</span>
+          <span>
+            Mostrando {filteredExpenses.length === 0 ? 0 : (activePage - 1) * pageSize + 1} - {Math.min(activePage * pageSize, filteredExpenses.length)} de {filteredExpenses.length} registros
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+            disabled={activePage === 1}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white disabled:opacity-40 disabled:hover:text-zinc-400 transition-all cursor-pointer"
+          >
+            Anterior
+          </button>
+          <span className="px-3 py-1.5 text-zinc-400 font-mono">
+            Pág. {activePage} de {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+            disabled={activePage === totalPages}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white disabled:opacity-40 disabled:hover:text-zinc-400 transition-all cursor-pointer"
+          >
+            Próxima
+          </button>
+        </div>
       </div>
 
       {/* Baixar completamente modal */}

@@ -19,7 +19,8 @@ import {
   ArrowLeft,
   Filter,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  RefreshCw
 } from "lucide-react";
 import { 
   collection, 
@@ -48,7 +49,7 @@ import {
   FinanceCategory 
 } from "@/types/finance";
 import { CreditCardForm } from "./credit-card-form";
-import CardInvoiceImport from "./card-invoice-import";
+const CardInvoiceImport = React.lazy(() => import("./card-invoice-import"));
 import CardInvoicePreview from "./card-invoice-preview";
 import { CardManualEntryForm } from "./card-manual-entry-form";
 import { exportCardInvoicePDF } from "@/lib/pdf-utils";
@@ -274,7 +275,6 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
       });
 
       const itemsList = allItems.filter(item => item.competencia === selectedCompetencia);
-      console.log(`[DEBUG] Itens recebidos para ${selectedCardId} (${selectedCompetencia}):`, itemsList.length);
 
       // Sort by purchase date ascending
       itemsList.sort((a, b) => {
@@ -298,7 +298,6 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     );
 
     const unsubInvoice = onSnapshot(qInvoice, (snap) => {
-      console.log(`[DEBUG] Fatura recebida para ${selectedCardId} (${selectedCompetencia}):`, !snap.empty);
       if (!snap.empty) {
         const docSnap = snap.docs[0];
         setCurrentInvoice({
@@ -751,10 +750,17 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
 
       {/* Main Import Interface overrides the dashboard */}
       {importState === "upload" && (
-        <CardInvoiceImport
-          onParsed={handleInvoiceParsed}
-          onCancel={() => setImportState("none")}
-        />
+        <React.Suspense fallback={
+          <div className="flex flex-col items-center justify-center p-12 rounded-3xl border border-emerald-500/10 bg-[#0A0D0A]/40 text-emerald-500 font-mono text-sm gap-3">
+            <RefreshCw className="w-5 h-5 animate-spin text-emerald-500" />
+            <span>Carregando importador de faturas...</span>
+          </div>
+        }>
+          <CardInvoiceImport
+            onParsed={handleInvoiceParsed}
+            onCancel={() => setImportState("none")}
+          />
+        </React.Suspense>
       )}
 
       {importState === "preview" && importResult && (
