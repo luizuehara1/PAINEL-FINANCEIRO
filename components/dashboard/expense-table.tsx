@@ -247,6 +247,11 @@ export default function ExpenseTable({
                               PARCELA {e.parcelaAtual}/{e.totalParcelas}
                             </span>
                           )}
+                          {e.imovelNome && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-[9px] font-medium text-emerald-400 font-sans" title={`Imóvel / Centro de Custo: ${e.imovelNome}`}>
+                              🏢 {e.imovelNome}
+                            </span>
+                          )}
                         </div>
                         {e.baixadaCompletamente && e.motivoBaixa && (
                           <p className="text-[10px] text-zinc-500 font-normal italic mt-0.5">

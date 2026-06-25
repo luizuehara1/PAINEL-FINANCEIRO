@@ -29,6 +29,8 @@ export default function TransactionForm({
   const [formaPagamento, setFormaPagamento] = useState("");
   const [data, setData] = useState("");
   const [categoria, setCategoria] = useState("");
+  const [bancoId, setBancoId] = useState("");
+  const [banks, setBanks] = useState<{ id: string; nome: string }[]>([]);
 
   // DB States
   const [dbCategoriasEntrada, setDbCategoriasEntrada] = useState<FinanceCategory[]>([]);
@@ -105,10 +107,23 @@ export default function TransactionForm({
       setDbFormasPagamento(list);
     });
 
+    const qBanks = query(collection(db, "financeiro", "geral", "bancos"));
+    const unsubBanks = onSnapshot(qBanks, (snap) => {
+      const list: { id: string; nome: string }[] = [];
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        if (d.ativo ?? true) {
+          list.push({ id: docSnap.id, nome: d.nome });
+        }
+      });
+      setBanks(list);
+    });
+
     return () => {
       unsubEntradas();
       unsubSaidas();
       unsubFormas();
+      unsubBanks();
     };
   }, [isOpen]);
 
@@ -121,6 +136,7 @@ export default function TransactionForm({
       setFormaPagamento(editingTransaction.formaPagamento);
       setData(editingTransaction.data);
       setCategoria(editingTransaction.categoria);
+      setBancoId(editingTransaction.bancoId || "");
 
       setExistingNoteUrl(editingTransaction.notaUrl || null);
       setExistingNoteName(editingTransaction.notaNome || null);
@@ -134,6 +150,7 @@ export default function TransactionForm({
       setValor("");
       setDescricao("");
       setData(new Date().toISOString().split("T")[0]);
+      setBancoId("");
 
       setExistingNoteUrl(null);
       setExistingNoteName(null);
@@ -142,6 +159,13 @@ export default function TransactionForm({
       setSelectedFile(null);
     }
   }, [editingTransaction, isOpen]);
+
+  // Set default bank when list loads
+  useEffect(() => {
+    if (!editingTransaction && banks.length > 0 && !bancoId) {
+      setBancoId(banks[0].id);
+    }
+  }, [banks, editingTransaction, bancoId]);
 
   // Synchronize category selection when list or type changes
   useEffect(() => {
@@ -174,8 +198,8 @@ export default function TransactionForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nome || !valor || !data || !categoria || !formaPagamento) {
-      alert("Por favor, preencha todos os campos obrigatórios. Certifique-se de que possui categorias e formas de pagamento cadastradas.");
+    if (!nome || !valor || !data || !categoria || !formaPagamento || !bancoId) {
+      alert("Por favor, preencha todos os campos obrigatórios. Certifique-se de que possui contas/bancos, categorias e formas de pagamento cadastradas.");
       return;
     }
 
@@ -195,6 +219,8 @@ export default function TransactionForm({
         finalNotaName = res.nome;
       }
 
+      const selectedBank = banks.find((b) => b.id === bancoId);
+
       onSubmit({
         tipo,
         nome,
@@ -203,6 +229,9 @@ export default function TransactionForm({
         formaPagamento,
         data,
         categoria,
+        bancoId,
+        bancoNome: selectedBank ? selectedBank.nome : "",
+        origem: "manual",
         notaUrl: finalNotaUrl,
         notaPublicId: finalNotaPublicId,
         notaTipo: finalNotaTipo,
@@ -320,6 +349,34 @@ export default function TransactionForm({
                     placeholder="Ex: Venda de Licença SaaS, Campanha de Ads..."
                     className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 outline-none transition-all focus:ring-1 focus:ring-emerald-500/10"
                   />
+                </div>
+
+                {/* Bank Account Selection Dropdown */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300">
+                    {tipo === "entrada" ? "Conta de destino" : "Conta de saída"} <span className="text-emerald-400">*</span>
+                  </label>
+                  <select
+                    required
+                    value={bancoId}
+                    onChange={(e) => setBancoId(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white outline-none transition-all focus:ring-1 focus:ring-emerald-500/10 cursor-pointer"
+                  >
+                    {banks.length === 0 ? (
+                      <option value="">Nenhuma conta ativa encontrada</option>
+                    ) : (
+                      banks.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.nome}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  {banks.length === 0 && (
+                    <p className="text-[11px] text-amber-500/90 mt-1 font-medium">
+                      Cadastre uma conta/banco ativo primeiro.
+                    </p>
+                  )}
                 </div>
 
                 {/* Valor & Data Row */}

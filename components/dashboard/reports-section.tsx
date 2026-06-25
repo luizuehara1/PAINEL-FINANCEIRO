@@ -29,6 +29,25 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
   const [reportType, setReportType] = useState<"todos" | "entradas" | "saidas" | "fixas" | "variaveis">("todos");
   const [reportPaymentMethod, setReportPaymentMethod] = useState("todos");
   const [reportCategory, setReportCategory] = useState("todas");
+  const [reportImovel, setReportImovel] = useState("todos");
+
+  const propertiesList = useMemo(() => {
+    const list: { id: string; nome: string }[] = [];
+    const seen = new Set<string>();
+    expenses.forEach((e) => {
+      if (e.imovelId && e.imovelNome && !seen.has(e.imovelId)) {
+        seen.add(e.imovelId);
+        list.push({ id: e.imovelId, nome: e.imovelNome });
+      }
+    });
+    transactions.forEach((t) => {
+      if (t.imovelId && t.imovelNome && !seen.has(t.imovelId)) {
+        seen.add(t.imovelId);
+        list.push({ id: t.imovelId, nome: t.imovelNome });
+      }
+    });
+    return list.sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [expenses, transactions]);
 
   const categoriesList = useMemo(() => {
     return Array.from(new Set([
@@ -50,6 +69,7 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
     setReportType("todos");
     setReportPaymentMethod("todos");
     setReportCategory("todas");
+    setReportImovel("todos");
   };
 
   const handleLocalExportPDF = () => {
@@ -79,9 +99,18 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
       if (reportPaymentMethod !== "todos" && t.formaPagamento !== reportPaymentMethod) return false;
       if (reportCategory !== "todas" && t.categoria !== reportCategory) return false;
 
+      // Imóvel / Centro de Custo filter
+      if (reportImovel !== "todos") {
+        if (reportImovel === "sem_imovel") {
+          if (t.imovelId) return false;
+        } else {
+          if (t.imovelId !== reportImovel) return false;
+        }
+      }
+
       return true;
     });
-  }, [transactions, reportMonth, reportStartDate, reportEndDate, reportType, reportPaymentMethod, reportCategory]);
+  }, [transactions, reportMonth, reportStartDate, reportEndDate, reportType, reportPaymentMethod, reportCategory, reportImovel]);
 
   const filteredExps = useMemo(() => {
     return expenses.filter((e) => {
@@ -101,9 +130,18 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
       if (reportPaymentMethod !== "todos" && e.formaPagamento !== reportPaymentMethod) return false;
       if (reportCategory !== "todas" && e.categoria !== reportCategory) return false;
 
+      // Imóvel / Centro de Custo filter
+      if (reportImovel !== "todos") {
+        if (reportImovel === "sem_imovel") {
+          if (e.imovelId) return false;
+        } else {
+          if (e.imovelId !== reportImovel) return false;
+        }
+      }
+
       return true;
     });
-  }, [expenses, reportMonth, reportStartDate, reportEndDate, reportType, reportPaymentMethod, reportCategory]);
+  }, [expenses, reportMonth, reportStartDate, reportEndDate, reportType, reportPaymentMethod, reportCategory, reportImovel]);
 
   // CALCULATIONS (Based strictly on filtered dataset)
   const totalReceita = useMemo(() => {
@@ -266,6 +304,40 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
       }));
   }, [filteredExps]);
 
+  const propertyExpenses = useMemo(() => {
+    const map: Record<string, { id: string; nome: string; total: number; count: number }> = {};
+    
+    // Initialize with all known properties so we display them even if they have R$ 0,00 spent!
+    propertiesList.forEach((im) => {
+      map[im.id] = { id: im.id, nome: im.nome, total: 0, count: 0 };
+    });
+
+    let semImovelTotal = 0;
+    let semImovelCount = 0;
+
+    filteredExps.forEach((e) => {
+      if (e.status === "pago") {
+        if (e.imovelId) {
+          if (!map[e.imovelId]) {
+            map[e.imovelId] = { id: e.imovelId, nome: e.imovelNome || "Desconhecido", total: 0, count: 0 };
+          }
+          map[e.imovelId].total += e.valor;
+          map[e.imovelId].count += 1;
+        } else {
+          semImovelTotal += e.valor;
+          semImovelCount += 1;
+        }
+      }
+    });
+
+    const list = Object.values(map);
+    if (semImovelTotal > 0) {
+      list.push({ id: "sem_imovel", nome: "Sem imóvel vinculado", total: semImovelTotal, count: semImovelCount });
+    }
+
+    return list.sort((a, b) => b.total - a.total);
+  }, [propertiesList, filteredExps]);
+
   // ANALYSIS GENERATOR
   const analysisCards = useMemo(() => {
     const list: string[] = [];
@@ -343,7 +415,7 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
           <div>
             <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Ciclo / Mês</label>
             <select
@@ -420,6 +492,21 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
               <option value="todos">Todos os Meios</option>
               {paymentMethodsList.map((method) => (
                 <option key={method} value={method}>{method}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Imóvel / Centro</label>
+            <select
+              value={reportImovel}
+              onChange={(e) => setReportImovel(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer font-sans"
+            >
+              <option value="todos">Todos os imóveis</option>
+              <option value="sem_imovel">Sem imóvel vinculado</option>
+              {propertiesList.map((im) => (
+                <option key={im.id} value={im.id}>{im.nome}</option>
               ))}
             </select>
           </div>
@@ -646,6 +733,55 @@ export default function ReportsSection({ transactions, expenses, currentDateForm
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Card de Gastos por Imóvel / Centro de Custo */}
+          <div className="bg-zinc-950 border border-white/5 p-6 rounded-2xl relative overflow-hidden flex flex-col col-span-1 lg:col-span-2">
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-500/15 to-transparent" />
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-emerald-400" />
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Gastos Consolidados por Imóvel (Despesas Pagas)</h4>
+              </div>
+              <span className="text-[10px] text-zinc-500 font-mono font-medium">Soma de Fixas + Variáveis</span>
+            </div>
+            
+            {propertyExpenses.length === 0 ? (
+              <p className="text-xs text-zinc-500 italic py-6 text-center">Nenhum gasto associado a imóvel localizado no período.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {propertyExpenses.map((p) => {
+                  const maxTotal = Math.max(...propertyExpenses.map(x => x.total)) || 1;
+                  const pct = Math.round((p.total / maxTotal) * 100);
+                  return (
+                    <div key={p.id} className="p-4 rounded-xl bg-zinc-900/40 border border-white/5 flex flex-col justify-between hover:border-emerald-500/15 transition-all">
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-bold text-white truncate max-w-[150px]">{p.nome}</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-white/5">
+                            {p.count} {p.count === 1 ? "lançamento" : "lançamentos"}
+                          </span>
+                        </div>
+                        <h3 className="text-lg font-black text-emerald-400 font-mono">{formatCurrency(p.total)}</h3>
+                      </div>
+                      
+                      <div className="mt-3 space-y-1">
+                        <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
+                          <span>Relevância</span>
+                          <span>{pct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-zinc-950 overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-emerald-500 to-lime-400 rounded-full"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
         </div>

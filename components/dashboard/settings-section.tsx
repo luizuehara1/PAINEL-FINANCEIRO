@@ -4,6 +4,7 @@ import React from "react";
 import { Settings, HelpCircle } from "lucide-react";
 import CategoryManager from "./category-manager";
 import PaymentMethodManager from "./payment-method-manager";
+import PropertyManager from "./property-manager";
 import ResetFinanceData from "./reset-finance-data";
 
 interface SettingsSectionProps {
@@ -68,6 +69,11 @@ export default function SettingsSection({ userEmail }: SettingsSectionProps) {
           subtitle="Classifique despesas flutuantes, pontuais ou esporádicas."
           userEmail={userEmail}
         />
+
+        {/* Full width (xl:col-span-2) for Properties / Cost Centers */}
+        <div className="xl:col-span-2">
+          <PropertyManager userEmail={userEmail} />
+        </div>
 
         {/* Full width (xl:col-span-2) for Payment Methods */}
         <div className="xl:col-span-2">

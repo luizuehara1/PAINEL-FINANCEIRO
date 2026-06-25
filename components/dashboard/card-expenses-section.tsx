@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { motion } from "motion/react";
 import { 
   CreditCard as CardIcon, 
   Plus, 
@@ -32,9 +33,13 @@ import {
   Timestamp, 
   where, 
   getDocs, 
-  writeBatch 
+  writeBatch,
+  increment
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { calculateCardTotals } from "@/lib/card-totals-utils";
+import { confirmCardInvoicePaymentAndUpdateBank } from "@/lib/bank-balance-utils";
+import { ConfirmDialog } from "./confirm-dialog";
 import { 
   CreditCard as ICreditCard, 
   CardInvoice, 
@@ -57,6 +62,16 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
   const [cards, setCards] = useState<ICreditCard[]>([]);
   const [loadingCards, setLoadingCards] = useState(true);
   const [categories, setCategories] = useState<string[]>(["Alimentação", "Sistemas", "Anúncios", "Transporte", "Saúde", "Outros"]);
+  const [banks, setBanks] = useState<{ id: string; nome: string; saldoAtual: number }[]>([]);
+  const [invoicePaymentModal, setInvoicePaymentModal] = useState<{
+    isOpen: boolean;
+    selectedBankId: string;
+    invoiceToPay: CardInvoice | null;
+  }>({
+    isOpen: false,
+    selectedBankId: "",
+    invoiceToPay: null,
+  });
 
   // Navigation state
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -66,6 +81,7 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
   const [currentInvoice, setCurrentInvoice] = useState<CardInvoice | null>(null);
   const [invoiceItems, setInvoiceItems] = useState<CardItem[]>([]);
   const [loadingInvoiceData, setLoadingInvoiceData] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [allCompetencias, setAllCompetencias] = useState<string[]>([]);
 
   // Filtering states
@@ -81,6 +97,27 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
   const [importState, setImportState] = useState<"none" | "upload" | "preview">("none");
   const [importResult, setImportResult] = useState<ImportInvoiceResult | null>(null);
   const [importFileName, setImportFileName] = useState("");
+
+  // Reusable Confirm Dialog State
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("");
+  const [confirmDesc, setConfirmDesc] = useState("");
+  const [confirmAction, setConfirmAction] = useState<(() => void | Promise<void>) | null>(null);
+  const [confirmVariant, setConfirmVariant] = useState<"default" | "danger" | "success">("default");
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
+  const showConfirm = (
+    title: string,
+    desc: string,
+    onConfirm: () => void | Promise<void>,
+    variant: "default" | "danger" | "success" = "default"
+  ) => {
+    setConfirmTitle(title);
+    setConfirmDesc(desc);
+    setConfirmAction(() => onConfirm);
+    setConfirmVariant(variant);
+    setConfirmOpen(true);
+  };
 
   // Edit Item Form Fields
   const [editDesc, setEditDesc] = useState("");
@@ -118,6 +155,22 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     });
 
     return () => unsub();
+  }, []);
+
+  // Load active banks
+  useEffect(() => {
+    const qBanks = query(collection(db, "financeiro", "geral", "bancos"));
+    const unsubBanks = onSnapshot(qBanks, (snap) => {
+      const list: { id: string; nome: string; saldoAtual: number }[] = [];
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        if (d.ativo ?? true) {
+          list.push({ id: docSnap.id, nome: d.nome, saldoAtual: d.saldoAtual || 0 });
+        }
+      });
+      setBanks(list);
+    });
+    return () => unsubBanks();
   }, []);
 
   // Load distinct categories from database despesas
@@ -203,22 +256,25 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     }
 
     setLoadingInvoiceData(true);
+    setLoadError(null);
 
     // 1. Listen to items (itensCartao)
     const qItems = query(
       collection(db, "financeiro", "geral", "itensCartao"),
-      where("cartaoId", "==", selectedCardId),
-      where("competencia", "==", selectedCompetencia)
+      where("cartaoId", "==", selectedCardId)
     );
 
     const unsubItems = onSnapshot(qItems, (snap) => {
-      const itemsList: CardItem[] = [];
+      const allItems: CardItem[] = [];
       snap.forEach(docSnap => {
-        itemsList.push({
+        allItems.push({
           id: docSnap.id,
           ...docSnap.data()
         } as CardItem);
       });
+
+      const itemsList = allItems.filter(item => item.competencia === selectedCompetencia);
+      console.log(`[DEBUG] Itens recebidos para ${selectedCardId} (${selectedCompetencia}):`, itemsList.length);
 
       // Sort by purchase date ascending
       itemsList.sort((a, b) => {
@@ -228,6 +284,10 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
       });
 
       setInvoiceItems(itemsList);
+    }, (error) => {
+      console.error("Erro ao carregar itens do cartão:", error);
+      setLoadError("Erro ao carregar lançamentos do cartão.");
+      setLoadingInvoiceData(false);
     });
 
     // 2. Listen to invoice (faturasCartao)
@@ -238,6 +298,7 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     );
 
     const unsubInvoice = onSnapshot(qInvoice, (snap) => {
+      console.log(`[DEBUG] Fatura recebida para ${selectedCardId} (${selectedCompetencia}):`, !snap.empty);
       if (!snap.empty) {
         const docSnap = snap.docs[0];
         setCurrentInvoice({
@@ -247,6 +308,10 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
       } else {
         setCurrentInvoice(null);
       }
+      setLoadingInvoiceData(false);
+    }, (error) => {
+      console.error("Erro ao carregar fatura do cartão:", error);
+      setLoadError("Erro ao carregar lançamentos do cartão.");
       setLoadingInvoiceData(false);
     });
 
@@ -283,17 +348,25 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
 
   // Delete credit card
   const handleDeleteCard = async (card: ICreditCard) => {
-    if (!confirm(`Tem certeza que deseja excluir o cartão "${card.nome}" (${card.banco})? Faturas e itens importados dele continuarão salvos, mas você não poderá mais cadastrar compras neste cartão.`)) {
-      return;
-    }
-
-    try {
-      await deleteDoc(doc(db, "financeiro", "geral", "cartoes", card.id));
-      if (selectedCardId === card.id) setSelectedCardId(null);
-    } catch (err) {
-      console.error("Erro ao excluir cartão:", err);
-      alert("Erro ao excluir cartão.");
-    }
+    showConfirm(
+      "Excluir cartão de crédito?",
+      `Tem certeza que deseja excluir o cartão "${card.nome}" (${card.banco})? Faturas e itens importados dele continuarão salvos, mas você não poderá mais cadastrar compras neste cartão.`,
+      async () => {
+        setConfirmLoading(true);
+        try {
+          await deleteDoc(doc(db, "financeiro", "geral", "cartoes", card.id));
+          if (selectedCardId === card.id) setSelectedCardId(null);
+          alert("Cartão excluído com sucesso.");
+        } catch (err) {
+          console.error("Erro ao excluir cartão:", err);
+          alert("Erro ao excluir cartão.");
+        } finally {
+          setConfirmLoading(false);
+          setConfirmOpen(false);
+        }
+      },
+      "danger"
+    );
   };
 
   // Recalculates metrics for invoice document in case of manual edits or deletions
@@ -330,176 +403,187 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
   const handleMarkAsPaid = async () => {
     if (!selectedCard || !selectedCompetencia) return;
 
-    // Check if we have items or invoice document
+    if (banks.length === 0) {
+      alert("Aviso: Cadastre e ative pelo menos uma conta/banco para confirmar pagamentos de fatura.");
+      return;
+    }
+
     let invoiceToPay = currentInvoice;
     if (!invoiceToPay) {
-      // Create a skeleton CardInvoice document if none exists yet
       if (invoiceItems.length === 0) {
         alert("Não é possível pagar uma fatura sem lançamentos.");
         return;
       }
-      if (!confirm("Não existe uma fatura criada para este período. Deseja consolidar os lançamentos e registrar o pagamento?")) {
-        return;
-      }
-
-      const totalFixasCartao = invoiceItems
-        .filter(item => item.classificacaoCartao === "fixa_cartao")
-        .reduce((sum, item) => sum + item.valor, 0);
-
-      const totalVariaveisCartao = invoiceItems
-        .filter(item => item.classificacaoCartao === "variavel_cartao")
-        .reduce((sum, item) => sum + item.valor, 0);
-
-      const totalPagamentos = invoiceItems
-        .filter(item => item.classificacaoCartao === "pagamento_fatura")
-        .reduce((sum, item) => sum + Math.abs(item.valor), 0);
-
-      const totalCreditosEstornos = invoiceItems
-        .filter(item => item.classificacaoCartao === "credito_estorno")
-        .reduce((sum, item) => sum + Math.abs(item.valor), 0);
-
-      const valorTotal = totalFixasCartao + totalVariaveisCartao - totalPagamentos - totalCreditosEstornos;
-
-      const newInvoiceRef = await addDoc(collection(db, "financeiro", "geral", "faturasCartao"), {
-        cartaoId: selectedCardId,
-        cartaoNome: selectedCard.nome,
-        banco: selectedCard.banco,
-        finalCartao: selectedCard.finalCartao,
-        competencia: selectedCompetencia,
-        dataInicioCiclo: invoiceItems[0]?.dataInicioCiclo || Timestamp.now(),
-        dataFimCiclo: invoiceItems[0]?.dataFimCiclo || Timestamp.now(),
-        dataVencimento: invoiceItems[0]?.dataVencimentoFatura || Timestamp.now(),
-        valorTotal,
-        totalFixasCartao,
-        totalVariaveisCartao,
-        totalPagamentos,
-        totalCreditosEstornos,
-        status: "aberta",
-        criadoEm: Timestamp.now(),
-        criadoPorEmail: userEmail
-      });
-
-      // Fetch immediately to have reference
-      const invoiceSnap = await getDocs(query(collection(db, "financeiro", "geral", "faturasCartao"), where("cartaoId", "==", selectedCardId), where("competencia", "==", selectedCompetencia)));
-      if (!invoiceSnap.empty) {
-        invoiceToPay = { id: invoiceSnap.docs[0].id, ...invoiceSnap.docs[0].data() } as CardInvoice;
-      }
-    }
-
-    if (!invoiceToPay) return;
-
-    if (!confirm(`Deseja confirmar o pagamento total da fatura de ${selectedCompetencia} no valor de R$ ${invoiceToPay.valorTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}? Isso gerará uma saída na seção Entradas e Saídas.`)) {
+    } else if (invoiceToPay.status === "paga") {
+      alert("Essa fatura já foi paga.");
       return;
     }
 
+    setInvoicePaymentModal({
+      isOpen: true,
+      selectedBankId: banks[0].id,
+      invoiceToPay: invoiceToPay
+    });
+  };
+
+  // Process credit card invoice payment with bank balance deduction
+  const handleExecuteCardInvoicePaymentWithBank = async () => {
+    const { selectedBankId, invoiceToPay } = invoicePaymentModal;
+    if (!selectedBankId) {
+      alert("Selecione uma conta para pagamento.");
+      return;
+    }
+
+    setConfirmLoading(true);
     try {
-      const batch = writeBatch(db);
+      let finalInvoice = invoiceToPay;
+      
+      if (!finalInvoice) {
+        const totalFixasCartao = invoiceItems
+          .filter(item => item.classificacaoCartao === "fixa_cartao")
+          .reduce((sum, item) => sum + item.valor, 0);
 
-      // 1. Create automatic transaction (saída)
-      const transRef = doc(collection(db, "financeiro", "geral", "transacoes"));
-      const transId = transRef.id;
+        const totalVariaveisCartao = invoiceItems
+          .filter(item => item.classificacaoCartao === "variavel_cartao")
+          .reduce((sum, item) => sum + item.valor, 0);
 
-      const transPayload = {
-        tipo: "saida" as const,
-        nome: `Pagamento Fatura - ${selectedCard.nome} - ${selectedCompetencia}`,
-        descricao: `Liquidação de fatura consolidada de cartão de crédito. Competência: ${selectedCompetencia}.`,
-        categoria: "Pagamento Fatura",
-        valor: Number(invoiceToPay.valorTotal),
-        formaPagamento: "PIX", // Default payment form for credit card invoice
-        data: new Date().toISOString().split("T")[0],
-        origem: "manual", // Standard source
-        despesaId: null,
-        criadoEm: new Date().toISOString(),
-        criadoPorEmail: userEmail,
-      };
+        const totalPagamentos = invoiceItems
+          .filter(item => item.classificacaoCartao === "pagamento_fatura")
+          .reduce((sum, item) => sum + Math.abs(item.valor), 0);
 
-      batch.set(transRef, transPayload);
+        const totalCreditosEstornos = invoiceItems
+          .filter(item => item.classificacaoCartao === "credito_estorno")
+          .reduce((sum, item) => sum + Math.abs(item.valor), 0);
 
-      // 2. Update invoice status
-      const invoiceRef = doc(db, "financeiro", "geral", "faturasCartao", invoiceToPay.id);
-      batch.update(invoiceRef, { 
-        status: "paga", 
-        pagoEm: Timestamp.now(),
-        transacaoGeradaId: transId,
-        atualizadoEm: Timestamp.now()
-      });
+        const valorTotal = totalFixasCartao + totalVariaveisCartao - totalPagamentos - totalCreditosEstornos;
 
-      // 3. Update all items inside fatura to pago
-      for (const item of invoiceItems) {
-        const itemRef = doc(db, "financeiro", "geral", "itensCartao", item.id);
-        batch.update(itemRef, { status: "pago" });
+        await addDoc(collection(db, "financeiro", "geral", "faturasCartao"), {
+          cartaoId: selectedCardId,
+          cartaoNome: selectedCard.nome,
+          banco: selectedCard.banco,
+          finalCartao: selectedCard.finalCartao,
+          competencia: selectedCompetencia,
+          dataInicioCiclo: invoiceItems[0]?.dataInicioCiclo || Timestamp.now(),
+          dataFimCiclo: invoiceItems[0]?.dataFimCiclo || Timestamp.now(),
+          dataVencimento: invoiceItems[0]?.dataVencimentoFatura || Timestamp.now(),
+          valorTotal,
+          totalFixasCartao,
+          totalVariaveisCartao,
+          totalPagamentos,
+          totalCreditosEstornos,
+          status: "aberta",
+          criadoEm: Timestamp.now(),
+          criadoPorEmail: userEmail
+        });
+
+        const snap = await getDocs(query(collection(db, "financeiro", "geral", "faturasCartao"), where("cartaoId", "==", selectedCardId), where("competencia", "==", selectedCompetencia)));
+        if (!snap.empty) {
+          finalInvoice = { id: snap.docs[0].id, ...snap.docs[0].data() } as CardInvoice;
+        }
       }
 
-      await batch.commit();
-      alert("Fatura liquidada com sucesso! Saída gerada em Entradas e Saídas.");
-    } catch (err) {
-      console.error("Erro ao pagar fatura:", err);
-      alert("Erro ao liquidar fatura. Tente novamente.");
+      if (finalInvoice) {
+        await confirmCardInvoicePaymentAndUpdateBank(finalInvoice, selectedBankId, invoiceItems, userEmail);
+        alert("Fatura liquidada com sucesso! Saída gerada em Entradas e Saídas.");
+      } else {
+        throw new Error("Erro ao gerar fatura para pagamento.");
+      }
+    } catch (error: any) {
+      console.error("Erro ao consolidar/pagar fatura:", error);
+      alert("Erro ao pagar fatura: " + error.message);
+    } finally {
+      setConfirmLoading(false);
+      setInvoicePaymentModal({ isOpen: false, selectedBankId: "", invoiceToPay: null });
     }
   };
 
-  // Reopen paid invoice & delete generated transaction
+  // Reopen paid invoice, delete generated transaction and restore bank balance
   const handleReopenInvoice = async () => {
     if (!currentInvoice || !selectedCard) return;
 
-    if (!confirm("Deseja reabrir esta fatura? O status voltará para 'aberta' e a transação de saída gerada anteriormente será EXCLUÍDA de sua seção Entradas e Saídas!")) {
-      return;
-    }
+    showConfirm(
+      "Reabrir fatura?",
+      "Deseja reabrir esta fatura? O status voltará para 'aberta', a transação de saída gerada anteriormente será EXCLUÍDA e o valor será estornado na sua conta bancária!",
+      async () => {
+        setConfirmLoading(true);
+        try {
+          const batch = writeBatch(db);
 
-    try {
-      const batch = writeBatch(db);
+          // 1. Delete generated transaction if present
+          if (currentInvoice.transacaoGeradaId) {
+            const transRef = doc(db, "financeiro", "geral", "transacoes", currentInvoice.transacaoGeradaId);
+            batch.delete(transRef);
+          }
 
-      // 1. Delete generated transaction if present
-      if (currentInvoice.transacaoGeradaId) {
-        const transRef = doc(db, "financeiro", "geral", "transacoes", currentInvoice.transacaoGeradaId);
-        batch.delete(transRef);
-      }
+          // 2. Reopen invoice
+          const invoiceRef = doc(db, "financeiro", "geral", "faturasCartao", currentInvoice.id);
+          batch.update(invoiceRef, {
+            status: "aberta",
+            pagoEm: null,
+            transacaoGeradaId: null,
+            bancoPagamentoId: null,
+            bancoPagamentoNome: null,
+            atualizadoEm: Timestamp.now()
+          });
 
-      // 2. Reopen invoice
-      const invoiceRef = doc(db, "financeiro", "geral", "faturasCartao", currentInvoice.id);
-      batch.update(invoiceRef, {
-        status: "aberta",
-        pagoEm: null,
-        transacaoGeradaId: null,
-        atualizadoEm: Timestamp.now()
-      });
+          // 2b. Revert/estornar bank balance if bancoPagamentoId exists
+          if (currentInvoice.bancoPagamentoId) {
+            const bankRef = doc(db, "financeiro", "geral", "bancos", currentInvoice.bancoPagamentoId);
+            batch.update(bankRef, {
+              saldoAtual: increment(currentInvoice.valorTotal),
+              atualizadoEm: new Date().toISOString()
+            });
+          }
 
-      // 3. Reopen items inside fatura to pendente (except ignored ones)
-      for (const item of invoiceItems) {
-        const itemRef = doc(db, "financeiro", "geral", "itensCartao", item.id);
-        batch.update(itemRef, { 
-          status: item.classificacaoCartao === "ignorar" ? "ignorado" : "pendente" 
-        });
-      }
+          // 3. Reopen items inside fatura to pendente (except ignored ones)
+          for (const item of invoiceItems) {
+            const itemRef = doc(db, "financeiro", "geral", "itensCartao", item.id);
+            batch.update(itemRef, { 
+              status: item.classificacaoCartao === "ignorar" ? "ignorado" : "pendente" 
+            });
+          }
 
-      await batch.commit();
-      alert("Fatura reaberta com sucesso e transação de saída removida.");
-    } catch (err) {
-      console.error("Erro ao reabrir fatura:", err);
-      alert("Erro ao reabrir fatura.");
-    }
+          await batch.commit();
+          alert("Fatura reaberta com sucesso, transação de saída removida e saldo estornado.");
+        } catch (err) {
+          console.error("Erro ao reabrir fatura:", err);
+          alert("Erro ao reabrir fatura.");
+        } finally {
+          setConfirmLoading(false);
+          setConfirmOpen(false);
+        }
+      },
+      "default"
+    );
   };
 
   // Item deletion
   const handleDeleteItem = async (item: CardItem) => {
-    if (!confirm(`Deseja realmente excluir o lançamento "${item.descricao}"? Esta ação é irreversível.`)) {
-      return;
-    }
+    showConfirm(
+      "Excluir lançamento do cartão?",
+      "Essa ação removerá este lançamento da fatura. Essa ação não pode ser desfeita.",
+      async () => {
+        setConfirmLoading(true);
+        try {
+          await deleteDoc(doc(db, "financeiro", "geral", "itensCartao", item.id));
 
-    try {
-      await deleteDoc(doc(db, "financeiro", "geral", "itensCartao", item.id));
+          // If there is an active invoice, sync its metrics
+          if (currentInvoice) {
+            const updatedItems = invoiceItems.filter(i => i.id !== item.id);
+            await syncInvoiceMetrics(currentInvoice.id, updatedItems);
+          }
 
-      // If there is an active invoice, sync its metrics
-      if (currentInvoice) {
-        const updatedItems = invoiceItems.filter(i => i.id !== item.id);
-        await syncInvoiceMetrics(currentInvoice.id, updatedItems);
-      }
-
-      alert("Lançamento excluído com sucesso.");
-    } catch (err) {
-      console.error("Erro ao deletar lançamento:", err);
-      alert("Erro ao excluir lançamento.");
-    }
+          alert("Lançamento excluído com sucesso.");
+        } catch (err) {
+          console.error("Erro ao deletar lançamento:", err);
+          alert("Erro ao excluir lançamento.");
+        } finally {
+          setConfirmLoading(false);
+          setConfirmOpen(false);
+        }
+      },
+      "danger"
+    );
   };
 
   // Edit item trigger
@@ -569,6 +653,15 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
   });
 
   // Consolidated Card Metrics
+  const totals = calculateCardTotals(invoiceItems);
+
+  console.log("Cartão selecionado:", selectedCard);
+  console.log("Competência selecionada:", selectedCompetencia);
+  console.log("Itens carregados do Firestore:", invoiceItems);
+  console.log("Itens filtrados:", filteredItems);
+  console.log("Totais calculados:", totals);
+
+  // Consolidated Card Metrics
   const totalCardsLimit = cards
     .filter(c => c.ativo)
     .reduce((acc, c) => acc + (c.limite || 0), 0);
@@ -580,10 +673,13 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     setImportState("preview");
   };
 
-  const handleImportCompleted = () => {
+  const handleImportCompleted = (newComp?: string) => {
     setImportState("none");
     setImportResult(null);
     setImportFileName("");
+    if (newComp) {
+      setSelectedCompetencia(newComp);
+    }
   };
 
   return (
@@ -645,6 +741,13 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
           </div>
         )}
       </div>
+
+      {loadError && (
+        <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex gap-2.5 items-center">
+          <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Main Import Interface overrides the dashboard */}
       {importState === "upload" && (
@@ -868,33 +971,40 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                   {/* Values bento block */}
                   <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="p-4 rounded-2xl bg-zinc-900/10 border border-white/5 space-y-1">
-                      <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider font-mono">Fixas do Cartão</span>
-                      <h5 className="text-base font-bold font-mono text-amber-400">
-                        R$ {(currentInvoice?.totalFixasCartao || invoiceItems.filter(i => i.classificacaoCartao === "fixa_cartao").reduce((acc, i) => acc + i.valor, 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </h5>
-                    </div>
+                    {(() => {
+                      const totals = calculateCardTotals(invoiceItems);
+                      return (
+                        <>
+                          <div className="p-4 rounded-2xl bg-zinc-900/10 border border-white/5 space-y-1">
+                            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider font-mono">Fixas do Cartão</span>
+                            <h5 className="text-base font-bold font-mono text-amber-400">
+                              R$ {(currentInvoice?.totalFixasCartao || totals.totalFixasCartao).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </h5>
+                          </div>
 
-                    <div className="p-4 rounded-2xl bg-zinc-900/10 border border-white/5 space-y-1">
-                      <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider font-mono">Variáveis do Cartão</span>
-                      <h5 className="text-base font-bold font-mono text-blue-400">
-                        R$ {(currentInvoice?.totalVariaveisCartao || invoiceItems.filter(i => i.classificacaoCartao === "variavel_cartao").reduce((acc, i) => acc + i.valor, 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </h5>
-                    </div>
+                          <div className="p-4 rounded-2xl bg-zinc-900/10 border border-white/5 space-y-1">
+                            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider font-mono">Variáveis do Cartão</span>
+                            <h5 className="text-base font-bold font-mono text-blue-400">
+                              R$ {(currentInvoice?.totalVariaveisCartao || totals.totalVariaveisCartao).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </h5>
+                          </div>
 
-                    <div className="p-4 rounded-2xl bg-zinc-900/10 border border-white/5 space-y-1">
-                      <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider font-mono">Créditos/Estornos</span>
-                      <h5 className="text-base font-bold font-mono text-emerald-400">
-                        R$ {(currentInvoice?.totalCreditosEstornos || invoiceItems.filter(i => i.classificacaoCartao === "credito_estorno").reduce((acc, i) => acc + Math.abs(i.valor), 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </h5>
-                    </div>
+                          <div className="p-4 rounded-2xl bg-zinc-900/10 border border-white/5 space-y-1">
+                            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider font-mono">Créditos/Estornos</span>
+                            <h5 className="text-base font-bold font-mono text-emerald-400">
+                              R$ {(currentInvoice?.totalCreditosEstornos || totals.totalCreditosEstornos).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </h5>
+                          </div>
 
-                    <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 space-y-1">
-                      <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider font-mono">Total Consolidado</span>
-                      <h5 className="text-lg font-bold font-mono text-white">
-                        R$ {(currentInvoice?.valorTotal || invoiceItems.filter(i => ["fixa_cartao", "variavel_cartao"].includes(i.classificacaoCartao)).reduce((acc, i) => acc + i.valor, 0) - invoiceItems.filter(i => ["credito_estorno", "pagamento_fatura"].includes(i.classificacaoCartao)).reduce((acc, i) => acc + Math.abs(i.valor), 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </h5>
-                    </div>
+                          <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 space-y-1">
+                            <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider font-mono">Total Consolidado</span>
+                            <h5 className="text-lg font-bold font-mono text-white">
+                              R$ {(currentInvoice?.valorTotal || totals.totalConsolidado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </h5>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
 
                   {/* Status & Liquidate box */}
@@ -1128,8 +1238,11 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
           userEmail={userEmail}
           categories={categories}
           onClose={() => setIsManualFormOpen(false)}
-          onSave={() => {
+          onSave={(newComp) => {
             setIsManualFormOpen(false);
+            if (newComp) {
+              setSelectedCompetencia(newComp);
+            }
             alert("Lançamento manual adicionado com sucesso!");
           }}
         />
@@ -1218,6 +1331,108 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
               </form>
             </div>
           </div>
+        </div>
+      )}
+
+      {confirmOpen && (
+        <ConfirmDialog
+          open={confirmOpen}
+          title={confirmTitle}
+          description={confirmDesc}
+          onConfirm={confirmAction || (() => {})}
+          onCancel={() => {
+            if (!confirmLoading) {
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            }
+          }}
+          loading={confirmLoading}
+          variant={confirmVariant}
+        />
+      )}
+
+      {invoicePaymentModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => !confirmLoading && setInvoicePaymentModal(prev => ({ ...prev, isOpen: false }))}
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="relative w-full max-w-md overflow-hidden rounded-3xl p-[1px] bg-gradient-to-tr from-emerald-500/30 via-zinc-800 to-zinc-800 shadow-2xl z-10"
+          >
+            <div className="bg-zinc-950 rounded-[23px] px-6 py-7 border border-white/5">
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500">
+                    <Check className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-white tracking-wide">
+                      Pagar Fatura do Cartão
+                    </h4>
+                    <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                      SELECIONE A CONTA DE SAÍDA
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={confirmLoading}
+                  onClick={() => setInvoicePaymentModal(prev => ({ ...prev, isOpen: false }))}
+                  className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 text-zinc-400 hover:text-white transition-all hover:scale-105 cursor-pointer disabled:opacity-50"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-zinc-300 leading-relaxed mb-5">
+                Selecione a conta bancária pela qual esta fatura será paga. O valor total de <span className="font-bold text-white">R$ {(invoicePaymentModal.invoiceToPay?.valorTotal ?? invoiceItems.reduce((sum, item) => sum + (item.classificacaoCartao === "fixa_cartao" || item.classificacaoCartao === "variavel_cartao" ? item.valor : -Math.abs(item.valor)), 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span> será deduzido do saldo atual da conta e uma transação de saída automática de cartão será gerada.
+              </p>
+
+              <div className="space-y-4 mb-6">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-400">Conta/Banco de Saída</label>
+                  <select
+                    disabled={confirmLoading}
+                    value={invoicePaymentModal.selectedBankId}
+                    onChange={(e) => setInvoicePaymentModal(prev => ({ ...prev, selectedBankId: e.target.value }))}
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white outline-none transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {banks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.nome} (Saldo: R$ {b.saldoAtual?.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={confirmLoading}
+                  onClick={() => setInvoicePaymentModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 font-semibold text-xs text-zinc-300 hover:text-white border border-white/5 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={confirmLoading}
+                  onClick={handleExecuteCardInvoicePaymentWithBank}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-emerald-950/40 active:scale-95 disabled:opacity-50"
+                >
+                  {confirmLoading ? "Processando..." : "Confirmar Pagamento"}
+                </button>
+              </div>
+            </div>
+          </motion.div>
         </div>
       )}
     </div>

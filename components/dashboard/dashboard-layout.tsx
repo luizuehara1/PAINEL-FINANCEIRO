@@ -49,10 +49,12 @@ import {
   query, 
   orderBy, 
   serverTimestamp, 
-  Timestamp 
+  Timestamp,
+  increment,
+  writeBatch
 } from "firebase/firestore";
 
-import { Transaction, Expense } from "@/types/finance";
+import { Transaction, Expense, PropertyCostCenter, BankAccount, Investment, Asset } from "@/types/finance";
 import { auth, db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { isAllowedEmail } from "@/lib/auth";
 import { 
@@ -72,6 +74,12 @@ import {
   generateInstallmentExpenses, 
   deleteInstallmentGroup 
 } from "@/lib/installment-utils";
+import {
+  applyTransactionToBank,
+  reverseTransactionFromBank,
+  updateBankBalanceOnTransactionEdit,
+  confirmExpensePaymentAndUpdateBank,
+} from "@/lib/bank-balance-utils";
 import PaymentAlerts from "./payment-alerts";
 import TransactionForm from "./transaction-form";
 import TransactionTable from "./transaction-table";
@@ -81,6 +89,7 @@ import ReportsSection from "./reports-section";
 import SettingsSection from "./settings-section";
 import CardExpensesSection from "./card-expenses-section";
 import { ApplicationsSection } from "./applications-section";
+import { ConfirmDialog } from "./confirm-dialog";
 
 // Helper functions for date & timestamp conversion
 function stringToTimestamp(dateStr: string): Timestamp {
@@ -116,6 +125,22 @@ export default function DashboardLayout() {
   // Transactions and Expenses state
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+
+  // Banks, Investments and Assets state
+  const [banks, setBanks] = useState<BankAccount[]>([]);
+  const [investments, setInvestments] = useState<Investment[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+
+  // Expense/Card Invoice bank payment confirmation modal
+  const [paymentBankModalConfig, setPaymentBankModalConfig] = useState<{
+    isOpen: boolean;
+    expenseId: string | null;
+    selectedBankId: string;
+  }>({
+    isOpen: false,
+    expenseId: null,
+    selectedBankId: "",
+  });
 
   // Modals state
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
@@ -160,6 +185,27 @@ export default function DashboardLayout() {
     onCancel: () => void;
   } | null>(null);
 
+  // Dashboard general ConfirmDialog state
+  const [dashboardConfirmOpen, setDashboardConfirmOpen] = useState(false);
+  const [dashboardConfirmTitle, setDashboardConfirmTitle] = useState("");
+  const [dashboardConfirmDesc, setDashboardConfirmDesc] = useState("");
+  const [dashboardConfirmAction, setDashboardConfirmAction] = useState<(() => void | Promise<void>) | null>(null);
+  const [dashboardConfirmVariant, setDashboardConfirmVariant] = useState<"default" | "danger" | "success">("default");
+  const [dashboardConfirmLoading, setDashboardConfirmLoading] = useState(false);
+
+  const showDashboardConfirm = (
+    title: string,
+    desc: string,
+    onConfirm: () => void | Promise<void>,
+    variant: "default" | "danger" | "success" = "default"
+  ) => {
+    setDashboardConfirmTitle(title);
+    setDashboardConfirmDesc(desc);
+    setDashboardConfirmAction(() => onConfirm);
+    setDashboardConfirmVariant(variant);
+    setDashboardConfirmOpen(true);
+  };
+
   // Today dates
   const [todayStr, setTodayStr] = useState("");
   const [currentDateFormatted, setCurrentDateFormatted] = useState("");
@@ -188,6 +234,11 @@ export default function DashboardLayout() {
   const [variableStatus, setVariableStatus] = useState<"todos" | "pendente" | "pago">("todos");
   const [variableCategory, setVariableCategory] = useState("todas");
   const [variablePaymentMethod, setVariablePaymentMethod] = useState("todos");
+
+  // Property Filters & Data
+  const [layoutImoveis, setLayoutImoveis] = useState<PropertyCostCenter[]>([]);
+  const [fixedImovelFilter, setFixedImovelFilter] = useState("todos");
+  const [variableImovelFilter, setVariableImovelFilter] = useState("todos");
 
   // Format currency helper
   const formatCurrency = (value: number) => {
@@ -265,6 +316,9 @@ export default function DashboardLayout() {
           origem: d.origem || "manual",
           despesaId: d.despesaId || null,
           despesaTipo: d.despesaTipo || null,
+          imovelId: d.imovelId || null,
+          imovelNome: d.imovelNome || null,
+          centroCustoTipo: d.centroCustoTipo || null,
         });
       });
       setTransactions(txList);
@@ -307,6 +361,10 @@ export default function DashboardLayout() {
           baixadaEm: d.baixadaEm ? parseTimestampToString(d.baixadaEm) : null,
           motivoBaixa: d.motivoBaixa || null,
 
+          imovelId: d.imovelId || null,
+          imovelNome: d.imovelNome || null,
+          centroCustoTipo: d.centroCustoTipo || null,
+
           notaUrl: d.notaUrl || null,
           notaPublicId: d.notaPublicId || null,
           notaTipo: d.notaTipo || null,
@@ -339,9 +397,77 @@ export default function DashboardLayout() {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/despesas");
     });
 
+    const qLayoutImoveis = query(
+      collection(db, "financeiro", "geral", "imoveis"),
+      orderBy("nome", "asc")
+    );
+    const unsubscribeImoveis = onSnapshot(qLayoutImoveis, (snapshot) => {
+      const imList: PropertyCostCenter[] = [];
+      snapshot.forEach((doc) => {
+        const d = doc.data();
+        imList.push({
+          id: doc.id,
+          nome: d.nome,
+          tipo: d.tipo || "casa",
+          endereco: d.endereco || "",
+          descricao: d.descricao || "",
+          ativo: d.ativo ?? true,
+          criadoEm: parseTimestampToString(d.criadoEm),
+          atualizadoEm: parseTimestampToString(d.atualizadoEm),
+          criadoPorEmail: d.criadoPorEmail || "",
+        });
+      });
+      setLayoutImoveis(imList);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, "financeiro/geral/imoveis");
+    });
+
+    const qBanks = query(
+      collection(db, "financeiro", "geral", "bancos")
+    );
+    const unsubscribeBanks = onSnapshot(qBanks, (snapshot) => {
+      const list: BankAccount[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as BankAccount);
+      });
+      setBanks(list);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, "financeiro/geral/bancos");
+    });
+
+    const qInvs = query(
+      collection(db, "financeiro", "geral", "investimentos")
+    );
+    const unsubscribeInvs = onSnapshot(qInvs, (snapshot) => {
+      const list: Investment[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as Investment);
+      });
+      setInvestments(list);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, "financeiro/geral/investimentos");
+    });
+
+    const qAssets = query(
+      collection(db, "financeiro", "geral", "patrimonios")
+    );
+    const unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
+      const list: Asset[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as Asset);
+      });
+      setAssets(list);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, "financeiro/geral/patrimonios");
+    });
+
     return () => {
       unsubscribeTx();
       unsubscribeExp();
+      unsubscribeImoveis();
+      unsubscribeBanks();
+      unsubscribeInvs();
+      unsubscribeAssets();
     };
   }, [currentUser]);
 
@@ -375,6 +501,15 @@ export default function DashboardLayout() {
     if (fixedCategory !== "todas" && e.categoria !== fixedCategory) return false;
     if (fixedPaymentMethod !== "todos" && e.formaPagamento !== fixedPaymentMethod) return false;
     
+    // Property Filter
+    if (fixedImovelFilter !== "todos") {
+      if (fixedImovelFilter === "sem_imovel") {
+        if (e.imovelId) return false;
+      } else {
+        if (e.imovelId !== fixedImovelFilter) return false;
+      }
+    }
+
     // Recurrence filter
     if (fixedRecurrenceFilter !== "todos") {
       if (fixedRecurrenceFilter === "ativas") {
@@ -397,6 +532,16 @@ export default function DashboardLayout() {
     if (variableStatus !== "todos" && e.status !== variableStatus) return false;
     if (variableCategory !== "todas" && e.categoria !== variableCategory) return false;
     if (variablePaymentMethod !== "todos" && e.formaPagamento !== variablePaymentMethod) return false;
+
+    // Property Filter
+    if (variableImovelFilter !== "todos") {
+      if (variableImovelFilter === "sem_imovel") {
+        if (e.imovelId) return false;
+      } else {
+        if (e.imovelId !== variableImovelFilter) return false;
+      }
+    }
+
     return true;
   });
 
@@ -414,12 +559,14 @@ export default function DashboardLayout() {
     setFixedCategory("todas");
     setFixedPaymentMethod("todos");
     setFixedRecurrenceFilter("todos");
+    setFixedImovelFilter("todos");
 
     setVariableDateStart("");
     setVariableDateEnd("");
     setVariableStatus("todos");
     setVariableCategory("todas");
     setVariablePaymentMethod("todos");
+    setVariableImovelFilter("todos");
   };
 
   // Format Date to BR Helper
@@ -541,10 +688,15 @@ export default function DashboardLayout() {
   // ----------------------------------------
   // Section calculations (Dynamic calculations based on user instructions)
   // 1. All-time general metrics
+  const totalBancosAtivos = banks.filter(b => b.ativo).reduce((sum, b) => sum + (b.saldoAtual || 0), 0);
+  const totalInvestidoAtivos = investments.filter(i => i.ativo).reduce((sum, i) => sum + (i.valorAtual || 0), 0);
+  const totalBensAtivos = assets.filter(a => a.ativo).reduce((sum, a) => sum + (a.valorEstimado || 0), 0);
+  const patrimonioConsolidado = totalBancosAtivos + totalInvestidoAtivos + totalBensAtivos;
+
   const totalEntradasAll = transactions.filter(t => t.tipo === "entrada").reduce((sum, t) => sum + t.valor, 0);
   const totalSaidasAll = transactions.filter(t => t.tipo === "saida").reduce((sum, t) => sum + t.valor, 0);
   const totalDespesasPagasAll = expenses.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
-  const saldoAtualAllTime = totalEntradasAll - totalSaidasAll - totalDespesasPagasAll;
+  const saldoAtualAllTime = totalBancosAtivos;
 
   // 2. Month-specific general metrics (Dynamic filter on selected month)
   const entriesInSelectedMonth = transactions.filter(t => t.tipo === "entrada" && (!selectedMonth || t.data.startsWith(selectedMonth)));
@@ -560,7 +712,7 @@ export default function DashboardLayout() {
   const fixedPaidMonth = fixedInSelectedMonth.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
   const variablePaidMonth = variableInSelectedMonth.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
   const totalDespesasPagasMonth = fixedPaidMonth + variablePaidMonth;
-  const resultadoDoMes = totalEntradasMonth - totalSaidasMonth - totalDespesasPagasMonth;
+  const resultadoDoMes = totalEntradasMonth - totalSaidasMonth;
 
   // Overdue, today, upcoming calculations
   const overdueExpensesCount = expenses.filter(e => e.tipo === "fixa" && e.status !== "pago" && e.dataVencimento < todayStr).reduce((sum, e) => sum + e.valor, 0);
@@ -585,6 +737,29 @@ export default function DashboardLayout() {
     const userEmail = currentUser?.email || "";
     try {
       if (data.id) {
+        const originalTx = transactions.find(t => t.id === data.id);
+        const updatedTxPayload: Transaction = {
+          id: data.id,
+          tipo: data.tipo,
+          nome: data.nome,
+          descricao: data.descricao || "",
+          categoria: data.categoria,
+          valor: data.valor,
+          formaPagamento: data.formaPagamento,
+          data: data.data,
+          bancoId: data.bancoId || null,
+          bancoNome: data.bancoNome || null,
+          origem: data.origem || "manual",
+          criadoEm: originalTx?.criadoEm || "",
+          imovelId: data.imovelId || originalTx?.imovelId || null,
+          imovelNome: data.imovelNome || originalTx?.imovelNome || null,
+          centroCustoTipo: data.centroCustoTipo || originalTx?.centroCustoTipo || null,
+        };
+
+        if (originalTx) {
+          await updateBankBalanceOnTransactionEdit(originalTx, updatedTxPayload);
+        }
+
         const docRef = doc(db, "financeiro", "geral", "transacoes", data.id);
         await updateDoc(docRef, {
           tipo: data.tipo,
@@ -594,6 +769,9 @@ export default function DashboardLayout() {
           valor: data.valor,
           formaPagamento: data.formaPagamento,
           data: stringToTimestamp(data.data),
+          bancoId: data.bancoId || null,
+          bancoNome: data.bancoNome || null,
+          origem: data.origem || "manual",
           atualizadoEm: serverTimestamp(),
           notaUrl: data.notaUrl || null,
           notaPublicId: data.notaPublicId || null,
@@ -601,6 +779,23 @@ export default function DashboardLayout() {
           notaNome: data.notaNome || null,
         });
       } else {
+        const newTxPayload: Transaction = {
+          id: "",
+          tipo: data.tipo,
+          nome: data.nome,
+          descricao: data.descricao || "",
+          categoria: data.categoria,
+          valor: data.valor,
+          formaPagamento: data.formaPagamento,
+          data: data.data,
+          bancoId: data.bancoId || null,
+          bancoNome: data.bancoNome || null,
+          origem: "manual",
+          criadoEm: "",
+        };
+
+        await applyTransactionToBank(newTxPayload);
+
         const colRef = collection(db, "financeiro", "geral", "transacoes");
         await addDoc(colRef, {
           tipo: data.tipo,
@@ -610,6 +805,9 @@ export default function DashboardLayout() {
           valor: data.valor,
           formaPagamento: data.formaPagamento,
           data: stringToTimestamp(data.data),
+          bancoId: data.bancoId || null,
+          bancoNome: data.bancoNome || null,
+          origem: "manual",
           criadoEm: serverTimestamp(),
           atualizadoEm: serverTimestamp(),
           criadoPorEmail: userEmail,
@@ -911,21 +1109,30 @@ export default function DashboardLayout() {
       setExpenseActionConfirm({
         isOpen: true,
         title: "Excluir despesa paga?",
-        message: "Esta despesa já gerou uma saída automática. Deseja excluir também a saída vinculada?",
+        message: "Esta despesa já gerou uma saída automática. Deseja excluir também a saída vinculada e estornar o valor no banco?",
         confirmLabel: "Excluir despesa e saída vinculada",
         cancelLabel: "Cancelar",
         extraLabel: "Excluir somente despesa",
         onConfirm: async () => {
           try {
+            const batch = writeBatch(db);
             if (isParcelado && grupoParcelamentoId) {
               await deleteInstallmentGroup(grupoParcelamentoId);
             } else {
-              await deleteDoc(doc(db, "financeiro", "geral", "despesas", id));
+              batch.delete(doc(db, "financeiro", "geral", "despesas", id));
             }
             if (expense.transacaoGeradaId) {
-              await deleteLinkedExpenseTransaction(expense.transacaoGeradaId);
+              batch.delete(doc(db, "financeiro", "geral", "transacoes", expense.transacaoGeradaId));
             }
-            console.log("Despesa e transação excluídas");
+            if (expense.bancoPagamentoId) {
+              const bankRef = doc(db, "financeiro", "geral", "bancos", expense.bancoPagamentoId);
+              batch.update(bankRef, {
+                saldoAtual: increment(expense.valor),
+                atualizadoEm: new Date().toISOString()
+              });
+            }
+            await batch.commit();
+            console.log("Despesa e transação excluídas e saldo estornado.");
           } catch (err) {
             console.error(err);
           }
@@ -967,14 +1174,33 @@ export default function DashboardLayout() {
 
     try {
       if (type === "transaction") {
+        const tx = transactions.find(t => t.id === id);
+        if (tx) {
+          await reverseTransactionFromBank(tx);
+        }
         const docRef = doc(db, "financeiro", "geral", "transacoes", id);
         await deleteDoc(docRef);
         console.log("Transação excluída com sucesso:", id);
       } else {
+        const expense = expenses.find(e => e.id === id);
         if (isParcelado && grupoParcelamentoId && deleteOption === "all") {
+          if (expense && expense.status === "pago" && expense.bancoPagamentoId) {
+            const bankRef = doc(db, "financeiro", "geral", "bancos", expense.bancoPagamentoId);
+            await updateDoc(bankRef, {
+              saldoAtual: increment(expense.valor),
+              atualizadoEm: new Date().toISOString()
+            });
+          }
           await deleteInstallmentGroup(grupoParcelamentoId);
           console.log("Grupo de parcelamento excluído com sucesso:", grupoParcelamentoId);
         } else {
+          if (expense && expense.status === "pago" && expense.bancoPagamentoId) {
+            const bankRef = doc(db, "financeiro", "geral", "bancos", expense.bancoPagamentoId);
+            await updateDoc(bankRef, {
+              saldoAtual: increment(expense.valor),
+              atualizadoEm: new Date().toISOString()
+            });
+          }
           const docRef = doc(db, "financeiro", "geral", "despesas", id);
           await deleteDoc(docRef);
           console.log("Despesa excluída com sucesso:", id);
@@ -1004,14 +1230,41 @@ export default function DashboardLayout() {
     }
   };
 
-  const handleConfirmPaid = async (id: string) => {
-    const userEmail = currentUser?.email || "";
+  const handleConfirmPaid = (id: string) => {
     const expense = expenses.find(e => e.id === id);
     if (!expense) return;
+
+    const activeBanks = banks.filter(b => b.ativo);
+    if (activeBanks.length === 0) {
+      alert("Aviso: Cadastre e ative pelo menos uma conta/banco para confirmar pagamentos.");
+      return;
+    }
+
+    setPaymentBankModalConfig({
+      isOpen: true,
+      expenseId: id,
+      selectedBankId: activeBanks[0].id,
+    });
+  };
+
+  const handleExecuteExpensePaymentWithBank = async () => {
+    const { expenseId, selectedBankId } = paymentBankModalConfig;
+    if (!expenseId || !selectedBankId) return;
+
+    const expense = expenses.find(e => e.id === expenseId);
+    if (!expense) return;
+
+    const selectedBank = banks.find(b => b.id === selectedBankId);
+    if (!selectedBank) return;
+
     try {
-      await confirmExpensePaymentAndCreateTransaction(expense, userEmail, expenses);
+      const userEmail = currentUser?.email || "";
+      await confirmExpensePaymentAndUpdateBank(expense, selectedBankId, userEmail);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `financeiro/geral/despesas/${id}`);
+      console.error(err);
+      alert("Erro ao confirmar pagamento: " + (err as any).message);
+    } finally {
+      setPaymentBankModalConfig({ isOpen: false, expenseId: null, selectedBankId: "" });
     }
   };
 
@@ -1025,23 +1278,34 @@ export default function DashboardLayout() {
       setExpenseActionConfirm({
         isOpen: true,
         title: "Cancelar pagamento?",
-        message: "Esta despesa já gerou uma saída automática. Deseja excluir também a saída vinculada?",
-        confirmLabel: "Sim, excluir saída vinculada",
+        message: "Esta despesa já gerou uma saída automática. Deseja excluir também a saída vinculada e estornar o valor para o banco?",
+        confirmLabel: "Sim, excluir saída e estornar",
         cancelLabel: "Cancelar",
         extraLabel: "Não, manter saída vinculada",
         onConfirm: async () => {
           try {
-            const docRef = doc(db, "financeiro", "geral", "despesas", id);
-            await updateDoc(docRef, {
+            const batch = writeBatch(db);
+            batch.update(doc(db, "financeiro", "geral", "despesas", id), {
               status: "pendente",
               pagoEm: null,
               saidaGerada: false,
               transacaoGeradaId: null,
+              bancoPagamentoId: null,
+              bancoPagamentoNome: null,
               atualizadoEm: serverTimestamp()
             });
             if (expense.transacaoGeradaId) {
-              await deleteLinkedExpenseTransaction(expense.transacaoGeradaId);
+              batch.delete(doc(db, "financeiro", "geral", "transacoes", expense.transacaoGeradaId));
             }
+            if (expense.bancoPagamentoId) {
+              const bankRef = doc(db, "financeiro", "geral", "bancos", expense.bancoPagamentoId);
+              batch.update(bankRef, {
+                saldoAtual: increment(expense.valor),
+                atualizadoEm: new Date().toISOString()
+              });
+            }
+            await batch.commit();
+            console.log("Pagamento cancelado, transação excluída e saldo estornado.");
           } catch (err) {
             console.error(err);
           }
@@ -1055,6 +1319,8 @@ export default function DashboardLayout() {
               pagoEm: null,
               saidaGerada: false,
               transacaoGeradaId: null,
+              bancoPagamentoId: null,
+              bancoPagamentoNome: null,
               atualizadoEm: serverTimestamp()
             });
           } catch (err) {
@@ -1073,6 +1339,8 @@ export default function DashboardLayout() {
         await updateDoc(docRef, {
           status: "pendente",
           pagoEm: null,
+          bancoPagamentoId: null,
+          bancoPagamentoNome: null,
           atualizadoEm: serverTimestamp()
         });
       } catch (err) {
@@ -1838,7 +2106,7 @@ export default function DashboardLayout() {
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider">Filtros Avançados: Despesas Fixas</h3>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
                   <div>
                     <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Vencimento Inicial</label>
                     <input
@@ -1884,6 +2152,21 @@ export default function DashboardLayout() {
                       <option value="ativas">Ativas</option>
                       <option value="baixadas">Baixadas</option>
                       <option value="nao-recorrentes">Não recorrentes</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Imóvel / Centro</label>
+                    <select
+                      value={fixedImovelFilter}
+                      onChange={(e) => setFixedImovelFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer"
+                    >
+                      <option value="todos">Todos os imóveis</option>
+                      <option value="sem_imovel">Sem imóvel vinculado</option>
+                      {layoutImoveis.map((im) => (
+                        <option key={im.id} value={im.id}>{im.nome}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -2024,7 +2307,7 @@ export default function DashboardLayout() {
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider">Filtros Avançados: Despesas Variáveis</h3>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
                   <div>
                     <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Data Inicial</label>
                     <input
@@ -2055,6 +2338,21 @@ export default function DashboardLayout() {
                       <option value="todos">Todos os Status</option>
                       <option value="pendente">Pendente</option>
                       <option value="pago">Pago</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 font-bold">Imóvel / Centro</label>
+                    <select
+                      value={variableImovelFilter}
+                      onChange={(e) => setVariableImovelFilter(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer"
+                    >
+                      <option value="todos">Todos os imóveis</option>
+                      <option value="sem_imovel">Sem imóvel vinculado</option>
+                      {layoutImoveis.map((im) => (
+                        <option key={im.id} value={im.id}>{im.nome}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -2426,6 +2724,103 @@ export default function DashboardLayout() {
                     className="w-full px-5 py-3 rounded-xl bg-zinc-950 hover:bg-zinc-900 font-medium text-xs text-zinc-500 hover:text-zinc-300 transition-all cursor-pointer"
                   >
                     {expenseActionConfirm.cancelLabel}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {dashboardConfirmOpen && (
+          <ConfirmDialog
+            open={dashboardConfirmOpen}
+            title={dashboardConfirmTitle}
+            description={dashboardConfirmDesc}
+            onConfirm={dashboardConfirmAction || (() => {})}
+            onCancel={() => {
+              if (!dashboardConfirmLoading) {
+                setDashboardConfirmOpen(false);
+                setDashboardConfirmAction(null);
+              }
+            }}
+            loading={dashboardConfirmLoading}
+            variant={dashboardConfirmVariant}
+          />
+        )}
+        {paymentBankModalConfig.isOpen && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPaymentBankModalConfig(prev => ({ ...prev, isOpen: false }))}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-md overflow-hidden rounded-3xl p-[1px] bg-gradient-to-tr from-emerald-500/30 via-zinc-800 to-zinc-800 shadow-2xl z-10"
+            >
+              <div className="bg-zinc-950 rounded-[23px] px-6 py-7 border border-white/5">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500">
+                      <Check className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-bold text-white tracking-wide">
+                        Confirmar Pagamento
+                      </h4>
+                      <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                        SELECIONE A CONTA DE SAÍDA
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentBankModalConfig(prev => ({ ...prev, isOpen: false }))}
+                    className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 text-zinc-400 hover:text-white transition-all hover:scale-105 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <p className="text-xs text-zinc-300 leading-relaxed mb-5">
+                  Selecione a conta bancária pela qual esta despesa foi ou será paga. O valor será deduzido do saldo atual da conta correspondente e uma transação de saída automática será gerada.
+                </p>
+
+                <div className="space-y-4 mb-6">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-zinc-400 font-medium">Conta/Banco de Saída</label>
+                    <select
+                      value={paymentBankModalConfig.selectedBankId}
+                      onChange={(e) => setPaymentBankModalConfig(prev => ({ ...prev, selectedBankId: e.target.value }))}
+                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white outline-none transition-all cursor-pointer"
+                    >
+                      {banks.filter(b => b.ativo).map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.nome} (Saldo: R$ {b.saldoAtual?.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentBankModalConfig(prev => ({ ...prev, isOpen: false }))}
+                    className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 font-semibold text-xs text-zinc-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExecuteExpensePaymentWithBank}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs text-white transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-emerald-950/40 active:scale-95"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Confirmar Pagamento
                   </button>
                 </div>
               </div>

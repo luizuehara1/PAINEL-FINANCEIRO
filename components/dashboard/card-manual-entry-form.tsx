@@ -9,7 +9,7 @@ interface CardManualEntryFormProps {
   card: CreditCard;
   userEmail: string;
   onClose: () => void;
-  onSave: () => void;
+  onSave: (newCompetencia?: string) => void;
   categories: string[];
 }
 
@@ -41,6 +41,8 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
     setLoading(true);
     setError(null);
 
+    let savedCompetencia: string | undefined = undefined;
+
     try {
       if (isParcelado && totalParcelas > 1) {
         // Installment purchase: e.g. 300,00 split into 3 installments of 100,00
@@ -53,6 +55,9 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
           instDate.setMonth(originalDate.getMonth() + (i - 1));
 
           const cycleData = calculateCardCycle(instDate, card);
+          if (i === 1) {
+            savedCompetencia = cycleData.competencia;
+          }
 
           const payload = {
             cartaoId: card.id,
@@ -64,7 +69,7 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
             descricao: `${descricao.trim()} (${i}/${totalParcelas})`,
             categoria,
             valor: valorParcela,
-            valorOriginal: String(rawValor),
+            valorOriginal: rawValor,
             parcelaAtual: i,
             totalParcelas,
             parcelado: true,
@@ -87,6 +92,7 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
       } else {
         // Single purchase
         const cycleData = calculateCardCycle(new Date(dataCompra + "T12:00:00"), card);
+        savedCompetencia = cycleData.competencia;
 
         const payload = {
           cartaoId: card.id,
@@ -98,7 +104,7 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
           descricao: descricao.trim(),
           categoria,
           valor: rawValor,
-          valorOriginal: String(rawValor),
+          valorOriginal: rawValor,
           parcelaAtual: null,
           totalParcelas: null,
           parcelado: false,
@@ -119,7 +125,7 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
         await addDoc(collection(db, "financeiro", "geral", "itensCartao"), payload);
       }
 
-      onSave();
+      onSave(savedCompetencia);
     } catch (err: any) {
       console.error("Erro ao salvar lançamento manual no cartão:", err);
       setError("Erro ao salvar compra no cartão. Tente novamente.");

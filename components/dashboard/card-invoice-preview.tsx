@@ -25,12 +25,13 @@ import { CreditCard, ParsedCardItem, ImportInvoiceResult, FinanceCategory } from
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, writeBatch, Timestamp, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getCycleStartDate, getCycleEndDate, getInvoiceDueDate } from "@/lib/card-cycle-utils";
+import { parseCurrencyBR } from "@/lib/card-totals-utils";
 
 interface CardInvoicePreviewProps {
   initialResult: ImportInvoiceResult;
   availableCards: CreditCard[];
   userEmail: string;
-  onImportCompleted: () => void;
+  onImportCompleted: (newCompetencia?: string) => void;
   onCancel: () => void;
   fileName: string;
 }
@@ -384,8 +385,8 @@ export default function CardInvoicePreview({
           dataCompra: Timestamp.fromDate(new Date(item.dataCompra)),
           descricao: item.descricao || item.nome,
           categoria: item.categoriaSugerida,
-          valor: Number(item.valor),
-          valorOriginal: String(item.valorOriginal || item.valor),
+          valor: parseCurrencyBR(item.valor),
+          valorOriginal: parseCurrencyBR(item.valorOriginal || item.valor),
           parcelaAtual: item.parcelaAtual || null,
           totalParcelas: item.totalParcelas || null,
           parcelado: !!item.parcelado,
@@ -415,7 +416,7 @@ export default function CardInvoicePreview({
 
       await batch.commit();
       alert("Fatura e lançamentos importados com sucesso!");
-      onImportCompleted();
+      onImportCompleted(competencia);
 
     } catch (err: any) {
       console.error("Erro ao importar fatura:", err);

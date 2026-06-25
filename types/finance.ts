@@ -13,9 +13,14 @@ export interface Transaction {
   notaPublicId?: string | null;
   notaTipo?: string | null;
   notaNome?: string | null;
-  origem?: "manual" | "despesa" | "cartao";
+  origem?: "manual" | "despesa" | "cartao" | "investimento";
   despesaId?: string | null;
   despesaTipo?: "fixa" | "variavel" | null;
+  imovelId?: string | null;
+  imovelNome?: string | null;
+  centroCustoTipo?: "imovel" | null;
+  bancoId?: string | null;
+  bancoNome?: string | null;
 }
 
 export interface Expense {
@@ -34,6 +39,12 @@ export interface Expense {
   criadoPorEmail?: string;
   transacaoGeradaId?: string | null;
   saidaGerada?: boolean;
+  bancoPagamentoId?: string | null;
+  bancoPagamentoNome?: string | null;
+
+  imovelId?: string | null;
+  imovelNome?: string | null;
+  centroCustoTipo?: "imovel" | null;
 
   // Campos de recorrência inteligente
   diaVencimento?: number;
@@ -103,6 +114,8 @@ export interface CardInvoice {
   status: "aberta" | "fechada" | "vencida" | "paga";
   pagoEm?: any | null;
   transacaoGeradaId?: string | null;
+  bancoPagamentoId?: string | null;
+  bancoPagamentoNome?: string | null;
   criadoEm?: any;
   atualizadoEm?: any;
   criadoPorEmail?: string;
@@ -249,6 +262,18 @@ export interface InvestmentMovement {
   bancoDestinoId?: string | null;
   descricao?: string;
   criadoEm?: any;
+  criadoPorEmail?: string;
+}
+
+export interface PropertyCostCenter {
+  id: string;
+  nome: string;
+  tipo: "casa" | "apartamento" | "sala_comercial" | "terreno" | "galpao" | "outro";
+  endereco?: string;
+  descricao?: string;
+  ativo: boolean;
+  criadoEm?: any;
+  atualizadoEm?: any;
   criadoPorEmail?: string;
 }
 

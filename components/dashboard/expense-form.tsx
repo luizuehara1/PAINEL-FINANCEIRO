@@ -5,7 +5,7 @@ import { X, Save, Plus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Expense, FinanceCategory, PaymentMethod } from "@/types/finance";
+import { Expense, FinanceCategory, PaymentMethod, PropertyCostCenter } from "@/types/finance";
 import FileUpload from "./file-upload";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { generateInstallmentDates, calculateInstallmentValues } from "@/lib/installment-utils";
@@ -47,6 +47,8 @@ export default function ExpenseForm({
   const [dbCategoriasFixas, setDbCategoriasFixas] = useState<FinanceCategory[]>([]);
   const [dbCategoriasVariaveis, setDbCategoriasVariaveis] = useState<FinanceCategory[]>([]);
   const [dbFormasPagamento, setDbFormasPagamento] = useState<PaymentMethod[]>([]);
+  const [dbImoveis, setDbImoveis] = useState<PropertyCostCenter[]>([]);
+  const [selectedImovelId, setSelectedImovelId] = useState<string>("");
 
   // Attachment states
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -70,6 +72,10 @@ export default function ExpenseForm({
     );
     const qFormas = query(
       collection(db, "financeiro", "geral", "formasPagamento"),
+      orderBy("nome", "asc")
+    );
+    const qImoveis = query(
+      collection(db, "financeiro", "geral", "imoveis"),
       orderBy("nome", "asc")
     );
 
@@ -118,10 +124,27 @@ export default function ExpenseForm({
       setDbFormasPagamento(list);
     });
 
+    const unsubImoveis = onSnapshot(qImoveis, (snap) => {
+      const list: PropertyCostCenter[] = [];
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        if (d.ativo ?? true) {
+          list.push({
+            id: docSnap.id,
+            nome: d.nome,
+            tipo: d.tipo || "casa",
+            ativo: d.ativo ?? true,
+          });
+        }
+      });
+      setDbImoveis(list);
+    });
+
     return () => {
       unsubFixas();
       unsubVariaveis();
       unsubFormas();
+      unsubImoveis();
     };
   }, [isOpen]);
 
@@ -146,6 +169,7 @@ export default function ExpenseForm({
       setExistingNoteTipo(editingExpense.notaTipo || null);
       setExistingNotePublicId(editingExpense.notaPublicId || null);
       setSelectedFile(null);
+      setSelectedImovelId(editingExpense.imovelId || "");
     } else {
       setTipo(preselectedType);
       setNome("");
@@ -159,6 +183,7 @@ export default function ExpenseForm({
       setDiaVencimento(new Date().getDate());
       setParcelado(false);
       setTotalParcelas(12);
+      setSelectedImovelId("");
 
       setExistingNoteUrl(null);
       setExistingNoteName(null);
@@ -244,6 +269,11 @@ export default function ExpenseForm({
       const finalData = tipo === "variavel" ? data : "";
       const finalVencimento = tipo === "fixa" ? dataVencimento : "";
 
+      const matchingImovel = dbImoveis.find((p) => p.id === selectedImovelId);
+      const finalImovelId = selectedImovelId ? selectedImovelId : null;
+      const finalImovelNome = matchingImovel ? matchingImovel.nome : null;
+      const finalCentroCustoTipo = selectedImovelId ? ("imovel" as const) : null;
+
       onSubmit({
         tipo,
         nome,
@@ -270,6 +300,9 @@ export default function ExpenseForm({
         notaPublicId: finalNotaPublicId,
         notaTipo: finalNotaTipo,
         notaNome: finalNotaName,
+        imovelId: finalImovelId,
+        imovelNome: finalImovelNome,
+        centroCustoTipo: finalCentroCustoTipo,
         
         // Installment fields
         parcelado: showInstallments ? parcelado : false,
@@ -738,6 +771,25 @@ export default function ExpenseForm({
                       Pago / Liquidado
                     </button>
                   </div>
+                </div>
+
+                {/* Imóvel / Centro de Custo */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-300">
+                    Imóvel / Centro de Custo (Opcional)
+                  </label>
+                  <select
+                    value={selectedImovelId}
+                    onChange={(e) => setSelectedImovelId(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white outline-none transition-all focus:ring-1 focus:ring-emerald-500/10 cursor-pointer"
+                  >
+                    <option value="">Nenhum / Não associado</option>
+                    {dbImoveis.map((imovel) => (
+                      <option key={imovel.id} value={imovel.id}>
+                        {imovel.nome}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Descricao */}
