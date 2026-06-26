@@ -88,6 +88,7 @@ import CardExpensesSection from "./card-expenses-section";
 import { ApplicationsSection } from "./applications-section";
 import { ConfirmDialog } from "./confirm-dialog";
 import { generateFutureRecurringExpenses } from "@/lib/recurring-expense-utils";
+import { COMPANY_ID } from "@/lib/app-config";
 import { 
   filterFixedExpensesByPeriod, 
   calculateFixedExpenseTotals,
@@ -326,28 +327,31 @@ export default function DashboardLayout() {
       const txList: Transaction[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        txList.push({
-          id: doc.id,
-          tipo: d.tipo,
-          nome: d.nome,
-          descricao: d.descricao || "",
-          categoria: d.categoria,
-          valor: d.valor,
-          formaPagamento: d.formaPagamento,
-          data: parseTimestampToString(d.data),
-          criadoEm: parseTimestampToString(d.criadoEm || d.data),
-          criadoPorEmail: d.criadoPorEmail || "",
-          notaUrl: d.notaUrl || null,
-          notaPublicId: d.notaPublicId || null,
-          notaTipo: d.notaTipo || null,
-          notaNome: d.notaNome || null,
-          origem: d.origem || "manual",
-          despesaId: d.despesaId || null,
-          despesaTipo: d.despesaTipo || null,
-          imovelId: d.imovelId || null,
-          imovelNome: d.imovelNome || null,
-          centroCustoTipo: d.centroCustoTipo || null,
-        });
+        if (d.companyId === COMPANY_ID) {
+          txList.push({
+            id: doc.id,
+            companyId: d.companyId,
+            tipo: d.tipo,
+            nome: d.nome,
+            descricao: d.descricao || "",
+            categoria: d.categoria,
+            valor: d.valor,
+            formaPagamento: d.formaPagamento,
+            data: parseTimestampToString(d.data),
+            criadoEm: parseTimestampToString(d.criadoEm || d.data),
+            criadoPorEmail: d.criadoPorEmail || "",
+            notaUrl: d.notaUrl || null,
+            notaPublicId: d.notaPublicId || null,
+            notaTipo: d.notaTipo || null,
+            notaNome: d.notaNome || null,
+            origem: d.origem || "manual",
+            despesaId: d.despesaId || null,
+            despesaTipo: d.despesaTipo || null,
+            imovelId: d.imovelId || null,
+            imovelNome: d.imovelNome || null,
+            centroCustoTipo: d.centroCustoTipo || null,
+          });
+        }
       });
       setTransactions(txList);
     }, (err) => {
@@ -396,52 +400,55 @@ export default function DashboardLayout() {
       const expList: Expense[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        expList.push({
-          id: doc.id,
-          tipo: d.tipo,
-          nome: d.nome,
-          descricao: d.descricao || "",
-          categoria: d.categoria,
-          valor: d.valor,
-          formaPagamento: d.formaPagamento,
-          data: parseTimestampToString(d.data),
-          dataVencimento: parseTimestampToString(d.dataVencimento),
-          status: d.status,
-          pagoEm: d.pagoEm ? parseTimestampToString(d.pagoEm) : undefined,
-          criadoEm: parseTimestampToString(d.criadoEm || d.dataVencimento),
-          criadoPorEmail: d.criadoPorEmail || "",
-          diaVencimento: d.diaVencimento || undefined,
-          competencia: d.competencia || "",
-          recorrente: d.recorrente ?? false,
-          recorrenciaAtiva: d.recorrenciaAtiva ?? false,
-          despesaOrigemId: d.despesaOrigemId || null,
-          grupoRecorrenciaId: d.grupoRecorrenciaId || "",
-          baixadaCompletamente: d.baixadaCompletamente ?? false,
-          baixadaEm: d.baixadaEm ? parseTimestampToString(d.baixadaEm) : null,
-          motivoBaixa: d.motivoBaixa || null,
-          imovelId: d.imovelId || null,
-          imovelNome: d.imovelNome || null,
-          centroCustoTipo: d.centroCustoTipo || null,
-          notaUrl: d.notaUrl || null,
-          notaPublicId: d.notaPublicId || null,
-          notaTipo: d.notaTipo || null,
-          notaNome: d.notaNome || null,
-          origem: d.origem || undefined,
-          cartaoId: d.cartaoId || null,
-          faturaId: d.faturaId || null,
-          itemCartaoId: d.itemCartaoId || null,
-          parcelado: d.parcelado ?? false,
-          parcelaAtual: d.parcelaAtual || undefined,
-          totalParcelas: d.totalParcelas || undefined,
-          valorParcela: d.valorParcela || undefined,
-          valorTotalParcelado: d.valorTotalParcelado || undefined,
-          grupoParcelamentoId: d.grupoParcelamentoId || null,
-          parcelamentoAtivo: d.parcelamentoAtivo ?? false,
-          parcelamentoQuitado: d.parcelamentoQuitado ?? false,
-          quitadoEm: d.quitadoEm || null,
-          transacaoGeradaId: d.transacaoGeradaId || null,
-          saidaGerada: d.saidaGerada ?? false,
-        });
+        if (d.companyId === COMPANY_ID) {
+          expList.push({
+            id: doc.id,
+            companyId: d.companyId,
+            tipo: d.tipo,
+            nome: d.nome,
+            descricao: d.descricao || "",
+            categoria: d.categoria,
+            valor: d.valor,
+            formaPagamento: d.formaPagamento,
+            data: parseTimestampToString(d.data),
+            dataVencimento: parseTimestampToString(d.dataVencimento),
+            status: d.status,
+            pagoEm: d.pagoEm ? parseTimestampToString(d.pagoEm) : undefined,
+            criadoEm: parseTimestampToString(d.criadoEm || d.dataVencimento),
+            criadoPorEmail: d.criadoPorEmail || "",
+            diaVencimento: d.diaVencimento || undefined,
+            competencia: d.competencia || "",
+            recorrente: d.recorrente ?? false,
+            recorrenciaAtiva: d.recorrenciaAtiva ?? false,
+            despesaOrigemId: d.despesaOrigemId || null,
+            grupoRecorrenciaId: d.grupoRecorrenciaId || "",
+            baixadaCompletamente: d.baixadaCompletamente ?? false,
+            baixadaEm: d.baixadaEm ? parseTimestampToString(d.baixadaEm) : null,
+            motivoBaixa: d.motivoBaixa || null,
+            imovelId: d.imovelId || null,
+            imovelNome: d.imovelNome || null,
+            centroCustoTipo: d.centroCustoTipo || null,
+            notaUrl: d.notaUrl || null,
+            notaPublicId: d.notaPublicId || null,
+            notaTipo: d.notaTipo || null,
+            notaNome: d.notaNome || null,
+            origem: d.origem || undefined,
+            cartaoId: d.cartaoId || null,
+            faturaId: d.faturaId || null,
+            itemCartaoId: d.itemCartaoId || null,
+            parcelado: d.parcelado ?? false,
+            parcelaAtual: d.parcelaAtual || undefined,
+            totalParcelas: d.totalParcelas || undefined,
+            valorParcela: d.valorParcela || undefined,
+            valorTotalParcelado: d.valorTotalParcelado || undefined,
+            grupoParcelamentoId: d.grupoParcelamentoId || null,
+            parcelamentoAtivo: d.parcelamentoAtivo ?? false,
+            parcelamentoQuitado: d.parcelamentoQuitado ?? false,
+            quitadoEm: d.quitadoEm || null,
+            transacaoGeradaId: d.transacaoGeradaId || null,
+            saidaGerada: d.saidaGerada ?? false,
+          });
+        }
       });
 
       // Filter on client-side
@@ -485,17 +492,20 @@ export default function DashboardLayout() {
       const imList: PropertyCostCenter[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        imList.push({
-          id: doc.id,
-          nome: d.nome,
-          tipo: d.tipo || "casa",
-          endereco: d.endereco || "",
-          descricao: d.descricao || "",
-          ativo: d.ativo ?? true,
-          criadoEm: parseTimestampToString(d.criadoEm),
-          atualizadoEm: parseTimestampToString(d.atualizadoEm),
-          criadoPorEmail: d.criadoPorEmail || "",
-        });
+        if (d.companyId === COMPANY_ID) {
+          imList.push({
+            id: doc.id,
+            companyId: d.companyId,
+            nome: d.nome,
+            tipo: d.tipo || "casa",
+            endereco: d.endereco || "",
+            descricao: d.descricao || "",
+            ativo: d.ativo ?? true,
+            criadoEm: parseTimestampToString(d.criadoEm),
+            atualizadoEm: parseTimestampToString(d.atualizadoEm),
+            criadoPorEmail: d.criadoPorEmail || "",
+          });
+        }
       });
       setLayoutImoveis(imList);
     }, (err) => {
@@ -521,7 +531,10 @@ export default function DashboardLayout() {
     const unsubscribeBanks = onSnapshot(qBanks, (snapshot) => {
       const list: BankAccount[] = [];
       snapshot.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() } as BankAccount);
+        const d = doc.data();
+        if (d.companyId === COMPANY_ID) {
+          list.push({ id: doc.id, ...d } as BankAccount);
+        }
       });
       setBanks(list);
     }, (err) => {
@@ -532,7 +545,10 @@ export default function DashboardLayout() {
     const unsubscribeInvs = onSnapshot(qInvs, (snapshot) => {
       const list: Investment[] = [];
       snapshot.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() } as Investment);
+        const d = doc.data();
+        if (d.companyId === COMPANY_ID) {
+          list.push({ id: doc.id, ...d } as Investment);
+        }
       });
       setInvestments(list);
     }, (err) => {
@@ -543,7 +559,10 @@ export default function DashboardLayout() {
     const unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
       const list: Asset[] = [];
       snapshot.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() } as Asset);
+        const d = doc.data();
+        if (d.companyId === COMPANY_ID) {
+          list.push({ id: doc.id, ...d } as Asset);
+        }
       });
       setAssets(list);
     }, (err) => {
@@ -574,30 +593,33 @@ export default function DashboardLayout() {
       const list: CardInvoice[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        list.push({
-          id: doc.id,
-          cartaoId: d.cartaoId || "",
-          cartaoNome: d.cartaoNome || "",
-          banco: d.banco || "",
-          finalCartao: d.finalCartao || "",
-          competencia: d.competencia || "",
-          dataInicioCiclo: parseTimestampToString(d.dataInicioCiclo),
-          dataFimCiclo: parseTimestampToString(d.dataFimCiclo),
-          dataVencimento: parseTimestampToString(d.dataVencimento),
-          valorTotal: d.valorTotal || 0,
-          totalFixasCartao: d.totalFixasCartao || 0,
-          totalVariaveisCartao: d.totalVariaveisCartao || 0,
-          totalPagamentos: d.totalPagamentos || 0,
-          totalCreditosEstornos: d.totalCreditosEstornos || 0,
-          status: d.status || "aberta",
-          pagoEm: parseTimestampToString(d.pagoEm),
-          transacaoGeradaId: d.transacaoGeradaId || null,
-          bancoPagamentoId: d.bancoPagamentoId || null,
-          bancoPagamentoNome: d.bancoPagamentoNome || null,
-          criadoEm: parseTimestampToString(d.criadoEm),
-          atualizadoEm: parseTimestampToString(d.atualizadoEm),
-          criadoPorEmail: d.criadoPorEmail || "",
-        });
+        if (d.companyId === COMPANY_ID) {
+          list.push({
+            id: doc.id,
+            companyId: d.companyId,
+            cartaoId: d.cartaoId || "",
+            cartaoNome: d.cartaoNome || "",
+            banco: d.banco || "",
+            finalCartao: d.finalCartao || "",
+            competencia: d.competencia || "",
+            dataInicioCiclo: parseTimestampToString(d.dataInicioCiclo),
+            dataFimCiclo: parseTimestampToString(d.dataFimCiclo),
+            dataVencimento: parseTimestampToString(d.dataVencimento),
+            valorTotal: d.valorTotal || 0,
+            totalFixasCartao: d.totalFixasCartao || 0,
+            totalVariaveisCartao: d.totalVariaveisCartao || 0,
+            totalPagamentos: d.totalPagamentos || 0,
+            totalCreditosEstornos: d.totalCreditosEstornos || 0,
+            status: d.status || "aberta",
+            pagoEm: parseTimestampToString(d.pagoEm),
+            transacaoGeradaId: d.transacaoGeradaId || null,
+            bancoPagamentoId: d.bancoPagamentoId || null,
+            bancoPagamentoNome: d.bancoPagamentoNome || null,
+            criadoEm: parseTimestampToString(d.criadoEm),
+            atualizadoEm: parseTimestampToString(d.atualizadoEm),
+            criadoPorEmail: d.criadoPorEmail || "",
+          });
+        }
       });
       setCardInvoices(list);
     }, (err) => {

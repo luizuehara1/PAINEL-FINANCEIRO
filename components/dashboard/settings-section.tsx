@@ -6,6 +6,7 @@ import CategoryManager from "./category-manager";
 import PaymentMethodManager from "./payment-method-manager";
 import PropertyManager from "./property-manager";
 import ResetFinanceData from "./reset-finance-data";
+import DataRecoveryPanel from "./data-recovery-panel";
 
 interface SettingsSectionProps {
   userEmail: string;
@@ -78,6 +79,11 @@ export default function SettingsSection({ userEmail }: SettingsSectionProps) {
         {/* Full width (xl:col-span-2) for Payment Methods */}
         <div className="xl:col-span-2">
           <PaymentMethodManager userEmail={userEmail} />
+        </div>
+
+        {/* Full width (xl:col-span-2) for Data Recovery */}
+        <div className="xl:col-span-2 pt-4">
+          <DataRecoveryPanel />
         </div>
 
         {/* Full width (xl:col-span-2) for Maintenance Zone */}

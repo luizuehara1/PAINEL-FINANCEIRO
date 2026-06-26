@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { PaymentMethod } from "@/types/finance";
+import { COMPANY_ID } from "@/lib/app-config";
 
 interface PaymentMethodManagerProps {
   userEmail: string;
@@ -54,15 +55,18 @@ export default function PaymentMethodManager({ userEmail }: PaymentMethodManager
         const list: PaymentMethod[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            nome: data.nome,
-            descricao: data.descricao || "",
-            ativo: data.ativo ?? true,
-            criadoEm: data.criadoEm,
-            atualizadoEm: data.atualizadoEm,
-            criadoPorEmail: data.criadoPorEmail || ""
-          });
+          if (data.companyId === COMPANY_ID) {
+            list.push({
+              id: docSnap.id,
+              companyId: data.companyId,
+              nome: data.nome,
+              descricao: data.descricao || "",
+              ativo: data.ativo ?? true,
+              criadoEm: data.criadoEm,
+              atualizadoEm: data.atualizadoEm,
+              criadoPorEmail: data.criadoPorEmail || ""
+            });
+          }
         });
         setMethods(list);
         setLoading(false);
@@ -121,6 +125,7 @@ export default function PaymentMethodManager({ userEmail }: PaymentMethodManager
         // Add new payment method
         const colRef = collection(db, "financeiro", "geral", "formasPagamento");
         await addDoc(colRef, {
+          companyId: COMPANY_ID,
           nome: trimmedNome,
           descricao: descricao.trim(),
           ativo: true,

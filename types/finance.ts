@@ -1,5 +1,6 @@
 export interface Transaction {
   id: string;
+  companyId?: string;
   tipo: "entrada" | "saida";
   nome: string;
   descricao: string;
@@ -25,6 +26,7 @@ export interface Transaction {
 
 export interface Expense {
   id: string;
+  companyId?: string;
   tipo: "fixa" | "variavel";
   nome: string;
   descricao: string;
@@ -82,6 +84,7 @@ export interface Expense {
 
 export interface CreditCard {
   id: string;
+  companyId?: string;
   nome: string;
   banco: string;
   finalCartao: string;
@@ -98,6 +101,7 @@ export interface CreditCard {
 
 export interface CardInvoice {
   id: string;
+  companyId?: string;
   cartaoId: string;
   cartaoNome: string;
   banco: string;
@@ -123,6 +127,7 @@ export interface CardInvoice {
 
 export interface CardItem {
   id: string;
+  companyId?: string;
   cartaoId: string;
   cartaoNome: string;
   banco: string;
@@ -158,6 +163,7 @@ export interface FinanceAttachment {
 
 export interface FinanceCategory {
   id: string;
+  companyId?: string;
   nome: string;
   descricao?: string;
   ativo: boolean;
@@ -168,6 +174,7 @@ export interface FinanceCategory {
 
 export interface PaymentMethod {
   id: string;
+  companyId?: string;
   nome: string;
   descricao?: string;
   ativo: boolean;
@@ -213,6 +220,7 @@ export interface ImportInvoiceResult {
 
 export interface BankAccount {
   id: string;
+  companyId?: string;
   nome: string;
   tipoConta: "corrente" | "poupanca" | "caixa" | "carteira" | "outro";
   banco: string;
@@ -226,6 +234,7 @@ export interface BankAccount {
 
 export interface Investment {
   id: string;
+  companyId?: string;
   nome: string;
   tipoInvestimento: "renda_fixa" | "renda_variavel" | "tesouro" | "acoes" | "fii" | "cripto" | "fundo" | "outro";
   instituicao: string;
@@ -242,6 +251,7 @@ export interface Investment {
 
 export interface Asset {
   id: string;
+  companyId?: string;
   nome: string;
   tipoPatrimonio: "casa" | "apartamento" | "carro" | "moto" | "terreno" | "empresa" | "equipamento" | "outro";
   valorEstimado: number;
@@ -255,6 +265,7 @@ export interface Asset {
 
 export interface InvestmentMovement {
   id: string;
+  companyId?: string;
   investimentoId: string;
   tipo: "aporte" | "resgate";
   valor: number;
@@ -267,6 +278,7 @@ export interface InvestmentMovement {
 
 export interface PropertyCostCenter {
   id: string;
+  companyId?: string;
   nome: string;
   tipo: "casa" | "apartamento" | "sala_comercial" | "terreno" | "galpao" | "outro";
   endereco?: string;

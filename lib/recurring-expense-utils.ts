@@ -1,6 +1,7 @@
 import { collection, doc, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import { Expense } from "@/types/finance";
+import { COMPANY_ID } from "./app-config";
 
 /**
  * Automatically creates future recurring fixed expenses up to monthsAhead to populate upcoming months in filters.
@@ -13,10 +14,11 @@ export async function generateFutureRecurringExpenses(
   if (!userEmail || expenses.length === 0) return;
 
   // Filter unique active recurrence groups by looking at current recurrences.
-  // CRITICAL SAFEGUARD: Only generate from root expenses (where despesaOrigemId is falsy)
+  // CRITICAL SAFEGUARD 1: Only generate from root expenses (where despesaOrigemId is falsy)
   // to avoid recursive/chain-reaction generation from already-generated future expenses.
+  // CRITICAL SAFEGUARD 2: Only generate for expenses belonging to COMPANY_ID.
   const activeRecurrents = expenses.filter(
-    (e) => e.tipo === "fixa" && e.recorrente && e.recorrenciaAtiva && !e.baixadaCompletamente && e.grupoRecorrenciaId && !e.despesaOrigemId
+    (e) => e.tipo === "fixa" && e.recorrente && e.recorrenciaAtiva && !e.baixadaCompletamente && e.grupoRecorrenciaId && !e.despesaOrigemId && e.companyId === COMPANY_ID
   );
 
   if (activeRecurrents.length === 0) return;
@@ -34,6 +36,7 @@ export async function generateFutureRecurringExpenses(
 
     for (let i = 0; i <= monthsAhead; i++) {
       const parts = baseDate.split("-");
+      if (parts.length < 2) continue;
       let year = parseInt(parts[0]);
       let month = parseInt(parts[1]); // 1-12
       
@@ -65,6 +68,7 @@ export async function generateFutureRecurringExpenses(
       if (!alreadyExists) {
         const docRef = doc(collection(db, "financeiro", "geral", "despesas"));
         const newExpenseData = {
+          companyId: COMPANY_ID,
           tipo: "fixa" as const,
           nome: expense.nome,
           descricao: expense.descricao || "",
@@ -98,7 +102,11 @@ export async function generateFutureRecurringExpenses(
   }
 
   if (hasUpdates) {
-    await batch.commit();
-    console.log("Future recurring expenses generated successfully!");
+    try {
+      await batch.commit();
+      console.log("Future recurring expenses generated successfully!");
+    } catch (error) {
+      console.error("Error committing batch recurring expenses:", error);
+    }
   }
 }

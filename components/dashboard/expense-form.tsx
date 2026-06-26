@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Expense, FinanceCategory, PaymentMethod, PropertyCostCenter } from "@/types/finance";
+import { COMPANY_ID } from "@/lib/app-config";
 import FileUpload from "./file-upload";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { 
@@ -93,9 +94,10 @@ export default function ExpenseForm({
       const list: FinanceCategory[] = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data();
-        if (d.ativo ?? true) {
+        if ((d.ativo ?? true) && d.companyId === COMPANY_ID) {
           list.push({
             id: docSnap.id,
+            companyId: d.companyId,
             nome: d.nome,
             ativo: d.ativo ?? true,
           });
@@ -108,9 +110,10 @@ export default function ExpenseForm({
       const list: FinanceCategory[] = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data();
-        if (d.ativo ?? true) {
+        if ((d.ativo ?? true) && d.companyId === COMPANY_ID) {
           list.push({
             id: docSnap.id,
+            companyId: d.companyId,
             nome: d.nome,
             ativo: d.ativo ?? true,
           });
@@ -123,9 +126,10 @@ export default function ExpenseForm({
       const list: PaymentMethod[] = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data();
-        if (d.ativo ?? true) {
+        if ((d.ativo ?? true) && d.companyId === COMPANY_ID) {
           list.push({
             id: docSnap.id,
+            companyId: d.companyId,
             nome: d.nome,
             ativo: d.ativo ?? true,
           });
@@ -138,9 +142,10 @@ export default function ExpenseForm({
       const list: PropertyCostCenter[] = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data();
-        if (d.ativo ?? true) {
+        if ((d.ativo ?? true) && d.companyId === COMPANY_ID) {
           list.push({
             id: docSnap.id,
+            companyId: d.companyId,
             nome: d.nome,
             tipo: d.tipo || "casa",
             ativo: d.ativo ?? true,
@@ -227,10 +232,12 @@ export default function ExpenseForm({
   useEffect(() => {
     if (editingExpense) return;
 
-    const currentList = tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis;
+    const currentList = Array.isArray(tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis)
+      ? (tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis)
+      : [];
     if (currentList.length > 0) {
-      const exists = currentList.some((cat) => cat.nome === categoria);
-      if (!exists) {
+      const exists = currentList.some((cat) => cat && cat.nome === categoria);
+      if (!exists && currentList[0]) {
         setCategoria(currentList[0].nome);
       }
     } else {
@@ -242,10 +249,11 @@ export default function ExpenseForm({
   useEffect(() => {
     if (editingExpense) return;
 
-    if (dbFormasPagamento.length > 0) {
-      const exists = dbFormasPagamento.some((m) => m.nome === formaPagamento);
-      if (!exists) {
-        setFormaPagamento(dbFormasPagamento[0].nome);
+    const listFormas = Array.isArray(dbFormasPagamento) ? dbFormasPagamento : [];
+    if (listFormas.length > 0) {
+      const exists = listFormas.some((m) => m && m.nome === formaPagamento);
+      if (!exists && listFormas[0]) {
+        setFormaPagamento(listFormas[0].nome);
       }
     } else {
       setFormaPagamento("");
@@ -320,6 +328,7 @@ export default function ExpenseForm({
       const finalCentroCustoTipo = selectedImovelId ? ("imovel" as const) : null;
 
       onSubmit({
+        companyId: COMPANY_ID,
         tipo,
         nome,
         valor: Number(valor),
@@ -416,6 +425,12 @@ export default function ExpenseForm({
     "Boleto",
     "Outros",
   ];
+
+  const safeCategories = Array.isArray(tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis)
+    ? (tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis)
+    : [];
+  const safePaymentMethods = Array.isArray(dbFormasPagamento) ? dbFormasPagamento : [];
+  const safeProperties = Array.isArray(dbImoveis) ? dbImoveis : [];
 
   return (
     <AnimatePresence>
@@ -743,20 +758,20 @@ export default function ExpenseForm({
                     <select
                       value={categoria}
                       onChange={(e) => setCategoria(e.target.value)}
-                      disabled={(tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis).length === 0}
+                      disabled={safeCategories.length === 0}
                       className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white outline-none transition-all focus:ring-1 focus:ring-emerald-500/10 cursor-pointer disabled:opacity-60"
                     >
-                      {(tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis).length === 0 ? (
+                      {safeCategories.length === 0 ? (
                         <option value="">Nenhuma categoria cadastrada</option>
                       ) : (
-                        (tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis).map((cat) => (
+                        safeCategories.map((cat) => (
                           <option key={cat.id} value={cat.nome}>
                             {cat.nome}
                           </option>
                         ))
                       )}
                     </select>
-                    {(tipo === "fixa" ? dbCategoriasFixas : dbCategoriasVariaveis).length === 0 && (
+                    {safeCategories.length === 0 && (
                       <p className="text-[11px] text-amber-500/90 mt-1 font-medium">
                         Cadastre uma categoria na aba Cadastros.
                       </p>
@@ -771,20 +786,20 @@ export default function ExpenseForm({
                     <select
                       value={formaPagamento}
                       onChange={(e) => setFormaPagamento(e.target.value)}
-                      disabled={dbFormasPagamento.length === 0}
+                      disabled={safePaymentMethods.length === 0}
                       className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white outline-none transition-all focus:ring-1 focus:ring-emerald-500/10 cursor-pointer disabled:opacity-60"
                     >
-                      {dbFormasPagamento.length === 0 ? (
+                      {safePaymentMethods.length === 0 ? (
                         <option value="">Nenhuma forma de pagamento cadastrada</option>
                       ) : (
-                        dbFormasPagamento.map((forma) => (
+                        safePaymentMethods.map((forma) => (
                           <option key={forma.id} value={forma.nome}>
                             {forma.nome}
                           </option>
                         ))
                       )}
                     </select>
-                    {dbFormasPagamento.length === 0 && (
+                    {safePaymentMethods.length === 0 && (
                       <p className="text-[11px] text-amber-500/90 mt-1 font-medium">
                         Cadastre uma forma de pagamento na aba Cadastros.
                       </p>
@@ -832,7 +847,7 @@ export default function ExpenseForm({
                     className="w-full bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white outline-none transition-all focus:ring-1 focus:ring-emerald-500/10 cursor-pointer"
                   >
                     <option value="">Nenhum / Não associado</option>
-                    {dbImoveis.map((imovel) => (
+                    {safeProperties.map((imovel) => (
                       <option key={imovel.id} value={imovel.id}>
                         {imovel.nome}
                       </option>

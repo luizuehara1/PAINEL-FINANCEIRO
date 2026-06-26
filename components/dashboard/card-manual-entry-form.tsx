@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { CreditCard } from "@/types/finance";
 import { db } from "@/lib/firebase";
+import { COMPANY_ID } from "@/lib/app-config";
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from "firebase/firestore";
 import { X, Check } from "lucide-react";
 import { calculateCardCycle } from "@/lib/card-cycle-utils";
@@ -60,6 +61,7 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
           }
 
           const payload = {
+            companyId: COMPANY_ID,
             cartaoId: card.id,
             cartaoNome: card.nome,
             banco: card.banco,
@@ -95,6 +97,7 @@ export function CardManualEntryForm({ card, userEmail, onClose, onSave, categori
         savedCompetencia = cycleData.competencia;
 
         const payload = {
+          companyId: COMPANY_ID,
           cartaoId: card.id,
           cartaoNome: card.nome,
           banco: card.banco,

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   collection, 
   addDoc, 
@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { PropertyCostCenter } from "@/types/finance";
+import { COMPANY_ID } from "@/lib/app-config";
 import { ConfirmDialog } from "./confirm-dialog";
 import { PaginationControls } from "./pagination-controls";
 
@@ -45,6 +46,12 @@ export default function PropertyManager({ userEmail }: PropertyManagerProps) {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Memoize paginated properties list
+  const paginatedProperties = useMemo(() => {
+    const activePage = Math.min(currentPage, Math.ceil(properties.length / pageSize) || 1);
+    return properties.slice((activePage - 1) * pageSize, activePage * pageSize);
+  }, [properties, currentPage, pageSize]);
 
   // Form State
   const [nome, setNome] = useState("");
@@ -72,17 +79,20 @@ export default function PropertyManager({ userEmail }: PropertyManagerProps) {
         const list: PropertyCostCenter[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            nome: data.nome,
-            tipo: data.tipo || "casa",
-            endereco: data.endereco || "",
-            descricao: data.descricao || "",
-            ativo: data.ativo ?? true,
-            criadoEm: data.criadoEm,
-            atualizadoEm: data.atualizadoEm,
-            criadoPorEmail: data.criadoPorEmail || ""
-          });
+          if (data.companyId === COMPANY_ID) {
+            list.push({
+              id: docSnap.id,
+              companyId: data.companyId,
+              nome: data.nome,
+              tipo: data.tipo || "casa",
+              endereco: data.endereco || "",
+              descricao: data.descricao || "",
+              ativo: data.ativo ?? true,
+              criadoEm: data.criadoEm,
+              atualizadoEm: data.atualizadoEm,
+              criadoPorEmail: data.criadoPorEmail || ""
+            });
+          }
         });
         setProperties(list);
         setLoading(false);
@@ -143,6 +153,7 @@ export default function PropertyManager({ userEmail }: PropertyManagerProps) {
       } else {
         // Create new property
         await addDoc(collection(db, "financeiro", "geral", "imoveis"), {
+          companyId: COMPANY_ID,
           nome: trimmedNome,
           tipo,
           endereco: endereco.trim(),
@@ -425,10 +436,7 @@ export default function PropertyManager({ userEmail }: PropertyManagerProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5 bg-zinc-900/10">
-                  {React.useMemo(() => {
-                    const activePage = Math.min(currentPage, Math.ceil(properties.length / pageSize) || 1);
-                    return properties.slice((activePage - 1) * pageSize, activePage * pageSize);
-                  }, [properties, currentPage, pageSize]).map((prop) => (
+                  {paginatedProperties.map((prop) => (
                     <tr 
                       key={prop.id} 
                       className="hover:bg-zinc-900/30 transition-colors text-xs text-zinc-300"

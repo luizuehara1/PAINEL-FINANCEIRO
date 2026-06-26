@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { FinanceCategory } from "@/types/finance";
+import { COMPANY_ID } from "@/lib/app-config";
 
 interface CategoryManagerProps {
   collectionName: "categoriasEntrada" | "categoriasSaida" | "categoriasDespesasFixas" | "categoriasDespesasVariaveis";
@@ -57,15 +58,18 @@ export default function CategoryManager({ collectionName, title, subtitle, userE
         const list: FinanceCategory[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            nome: data.nome,
-            descricao: data.descricao || "",
-            ativo: data.ativo ?? true,
-            criadoEm: data.criadoEm,
-            atualizadoEm: data.atualizadoEm,
-            criadoPorEmail: data.criadoPorEmail || ""
-          });
+          if (data.companyId === COMPANY_ID) {
+            list.push({
+              id: docSnap.id,
+              companyId: data.companyId,
+              nome: data.nome,
+              descricao: data.descricao || "",
+              ativo: data.ativo ?? true,
+              criadoEm: data.criadoEm,
+              atualizadoEm: data.atualizadoEm,
+              criadoPorEmail: data.criadoPorEmail || ""
+            });
+          }
         });
         setCategories(list);
         setLoading(false);
@@ -124,6 +128,7 @@ export default function CategoryManager({ collectionName, title, subtitle, userE
         // Add new category
         const colRef = collection(db, "financeiro", "geral", collectionName);
         await addDoc(colRef, {
+          companyId: COMPANY_ID,
           nome: trimmedNome,
           descricao: descricao.trim(),
           ativo: true,

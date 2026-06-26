@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { Expense } from "@/types/finance";
+import { COMPANY_ID } from "./app-config";
 
 /**
  * Normalizes text to ignore casing, accents and trailing spaces.
@@ -137,6 +138,7 @@ export async function generateInstallmentExpenses({
     const docRef = doc(collection(db, "financeiro", "geral", "despesas"));
     
     const despesaPayload = {
+      companyId: COMPANY_ID,
       tipo: "fixa" as const,
       nome,
       descricao: `Parcela ${parcelaNum}/${totalParcelas} - ${descricao || nome}`,

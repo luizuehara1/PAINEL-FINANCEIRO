@@ -24,6 +24,7 @@ import {
 import { CreditCard, ParsedCardItem, ImportInvoiceResult, FinanceCategory } from "@/types/finance";
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, writeBatch, Timestamp, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { COMPANY_ID } from "@/lib/app-config";
 import { getCycleStartDate, getCycleEndDate, getInvoiceDueDate } from "@/lib/card-cycle-utils";
 import { parseCurrencyBR } from "@/lib/card-totals-utils";
 
@@ -316,6 +317,7 @@ export default function CardInvoicePreview({
       let faturaId = "";
 
       const faturaPayload = {
+        companyId: COMPANY_ID,
         cartaoId: selectedCardId,
         cartaoNome: selectedCard.nome,
         banco: selectedCard.banco,
@@ -377,6 +379,7 @@ export default function CardInvoicePreview({
         else if (item.destino === "ignorar") classification = "ignorar";
 
         const itemPayload = {
+          companyId: COMPANY_ID,
           faturaId,
           cartaoId: selectedCardId,
           cartaoNome: selectedCard.nome,

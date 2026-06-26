@@ -38,6 +38,7 @@ import {
   increment
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { COMPANY_ID } from "@/lib/app-config";
 import { calculateCardTotals } from "@/lib/card-totals-utils";
 import { confirmCardInvoicePaymentAndUpdateBank } from "@/lib/bank-balance-utils";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -137,10 +138,13 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     const unsub = onSnapshot(q, (snap) => {
       const list: ICreditCard[] = [];
       snap.forEach((docSnap) => {
-        list.push({
-          id: docSnap.id,
-          ...docSnap.data()
-        } as ICreditCard);
+        const d = docSnap.data();
+        if (d.companyId === COMPANY_ID) {
+          list.push({
+            id: docSnap.id,
+            ...d
+          } as ICreditCard);
+        }
       });
       setCards(list);
       setLoadingCards(false);
@@ -164,7 +168,7 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
       const list: { id: string; nome: string; saldoAtual: number }[] = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data();
-        if (d.ativo ?? true) {
+        if (d.companyId === COMPANY_ID && (d.ativo ?? true)) {
           list.push({ id: docSnap.id, nome: d.nome, saldoAtual: d.saldoAtual || 0 });
         }
       });
@@ -181,7 +185,8 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     const unsub1 = onSnapshot(qFixas, (snap) => {
       const list: string[] = [];
       snap.forEach(d => {
-        if (d.data().nome) list.push(d.data().nome);
+        const data = d.data();
+        if (data.companyId === COMPANY_ID && data.nome) list.push(data.nome);
       });
       setCategories(prev => Array.from(new Set([...prev, ...list])));
     });
@@ -189,7 +194,8 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     const unsub2 = onSnapshot(qVariaveis, (snap) => {
       const list: string[] = [];
       snap.forEach(d => {
-        if (d.data().nome) list.push(d.data().nome);
+        const data = d.data();
+        if (data.companyId === COMPANY_ID && data.nome) list.push(data.nome);
       });
       setCategories(prev => Array.from(new Set([...prev, ...list])));
     });
@@ -213,9 +219,12 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     const unsub = onSnapshot(qFaturas, (snap) => {
       const competencies: string[] = [];
       snap.forEach(d => {
-        const comp = d.data().competencia;
-        if (comp && !competencies.includes(comp)) {
-          competencies.push(comp);
+        const data = d.data();
+        if (data.companyId === COMPANY_ID) {
+          const comp = data.competencia;
+          if (comp && !competencies.includes(comp)) {
+            competencies.push(comp);
+          }
         }
       });
 
@@ -267,10 +276,13 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     const unsubItems = onSnapshot(qItems, (snap) => {
       const allItems: CardItem[] = [];
       snap.forEach(docSnap => {
-        allItems.push({
-          id: docSnap.id,
-          ...docSnap.data()
-        } as CardItem);
+        const data = docSnap.data();
+        if (data.companyId === COMPANY_ID) {
+          allItems.push({
+            id: docSnap.id,
+            ...data
+          } as CardItem);
+        }
       });
 
       const itemsList = allItems.filter(item => item.competencia === selectedCompetencia);
@@ -297,13 +309,18 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
     );
 
     const unsubInvoice = onSnapshot(qInvoice, (snap) => {
-      if (!snap.empty) {
-        const docSnap = snap.docs[0];
-        setCurrentInvoice({
-          id: docSnap.id,
-          ...docSnap.data()
-        } as CardInvoice);
-      } else {
+      let foundInvoice = false;
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.companyId === COMPANY_ID) {
+          setCurrentInvoice({
+            id: docSnap.id,
+            ...data
+          } as CardInvoice);
+          foundInvoice = true;
+        }
+      });
+      if (!foundInvoice) {
         setCurrentInvoice(null);
       }
       setLoadingInvoiceData(false);
@@ -332,6 +349,7 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
         const { id, ...cleanData } = cardData;
         await addDoc(collection(db, "financeiro", "geral", "cartoes"), {
           ...cleanData,
+          companyId: COMPANY_ID,
           criadoEm: Timestamp.now(),
           atualizadoEm: Timestamp.now(),
           criadoPorEmail: userEmail,
@@ -456,6 +474,7 @@ export default function CardExpensesSection({ userEmail }: CardExpensesSectionPr
         const valorTotal = totalFixasCartao + totalVariaveisCartao - totalPagamentos - totalCreditosEstornos;
 
         await addDoc(collection(db, "financeiro", "geral", "faturasCartao"), {
+          companyId: COMPANY_ID,
           cartaoId: selectedCardId,
           cartaoNome: selectedCard.nome,
           banco: selectedCard.banco,
