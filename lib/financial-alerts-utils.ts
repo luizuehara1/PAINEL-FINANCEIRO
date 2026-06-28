@@ -1,5 +1,6 @@
 import { Expense, BankAccount, CardInvoice, Transaction } from "@/types/finance";
 import { getCompetenceFromDateStr } from "./cycle-utils";
+import { isAccumulatedFilter } from "./filter-utils";
 
 /**
  * Calculates differences in days between two date strings (YYYY-MM-DD).
@@ -20,7 +21,7 @@ export function getDaysDiff(dateStr: string, todayStr: string): number {
  * Filters the expenses list by cycle/competency.
  */
 export function filterExpensesByCycle(expenses: Expense[], selectedCycle?: string): Expense[] {
-  if (!selectedCycle || selectedCycle === "all") {
+  if (isAccumulatedFilter(selectedCycle)) {
     return expenses;
   }
   return expenses.filter((e) => {
@@ -39,7 +40,7 @@ export function filterExpensesByCycle(expenses: Expense[], selectedCycle?: strin
  * Filters card invoices by cycle/competency.
  */
 export function filterCardInvoicesByCycle(cardInvoices: CardInvoice[], selectedCycle?: string): CardInvoice[] {
-  if (!selectedCycle || selectedCycle === "all") {
+  if (isAccumulatedFilter(selectedCycle)) {
     return cardInvoices;
   }
   return cardInvoices.filter((ci) => ci.competencia === selectedCycle);
@@ -49,7 +50,7 @@ export function filterCardInvoicesByCycle(cardInvoices: CardInvoice[], selectedC
  * Filters transactions by cycle/competency.
  */
 export function filterTransactionsByCycle(transactions: Transaction[], selectedCycle?: string): Transaction[] {
-  if (!selectedCycle || selectedCycle === "all") {
+  if (isAccumulatedFilter(selectedCycle)) {
     return transactions;
   }
   return transactions.filter((t) => {

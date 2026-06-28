@@ -7,6 +7,8 @@ import PaymentMethodManager from "./payment-method-manager";
 import PropertyManager from "./property-manager";
 import ResetFinanceData from "./reset-finance-data";
 import DataRecoveryPanel from "./data-recovery-panel";
+import DataAuditPanel from "./data-audit-panel";
+import RecurringRepairPanel from "./recurring-repair-panel";
 
 interface SettingsSectionProps {
   userEmail: string;
@@ -36,6 +38,12 @@ export default function SettingsSection({ userEmail }: SettingsSectionProps) {
           <span>As alterações nestas tabelas refletem imediatamente nos formulários de cadastro.</span>
         </div>
       </div>
+
+      {/* Auditoria dos Dados Panel */}
+      <DataAuditPanel />
+
+      {/* Diagnóstico e Reparo de Recorrências */}
+      <RecurringRepairPanel />
 
       {/* Grid Layout of Managers */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">

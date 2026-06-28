@@ -89,16 +89,29 @@ import { ApplicationsSection } from "./applications-section";
 import { ConfirmDialog } from "./confirm-dialog";
 import { generateFutureRecurringExpenses } from "@/lib/recurring-expense-utils";
 import { COMPANY_ID } from "@/lib/app-config";
+import { normalizeDateToISO } from "@/lib/date-utils";
 import { 
   filterFixedExpensesByPeriod, 
   calculateFixedExpenseTotals,
-  getDateRangeFromPeriodFilter
+  getDateRangeFromPeriodFilter,
+  calculateBankBalance,
+  calculateTransactionTotals,
+  calculateOverdueTotal,
+  calculateOverviewCards
 } from "@/lib/finance-calculations";
 import {
   getAvailableCyclesFromExpenses,
   getCompetenceFromDateStr,
   formatCompetenceLabel
 } from "@/lib/cycle-utils";
+import {
+  isAccumulatedFilter,
+  getCompetenceFromAnyDate,
+  validateFinanceDocument
+} from "@/lib/filter-utils";
+import { registerDiagnostic } from "@/lib/data-source";
+import DataDiagnosticPanel from "./data-diagnostic-panel";
+import { ErrorBoundary } from "./error-fallback";
 
 // Helper functions for date & timestamp conversion
 function stringToTimestamp(dateStr: string): Timestamp {
@@ -125,6 +138,7 @@ type ActiveSection = "overview" | "transactions" | "fixed-expenses" | "variable-
 
 export default function DashboardLayout() {
   const [activeTab, setActiveTab] = useState<ActiveSection>("overview");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   
   // Auth state
@@ -325,12 +339,24 @@ export default function DashboardLayout() {
     );
     const unsubscribeTx = onSnapshot(qTx, (snapshot) => {
       const txList: Transaction[] = [];
+      const ignoredDocs: any[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        if (d.companyId === COMPANY_ID) {
+        const item = { id: doc.id, ...d, companyId: d.companyId || COMPANY_ID };
+        const isValid = validateFinanceDocument(item, "transaction");
+        if (!isValid) {
+          ignoredDocs.push({
+            id: doc.id,
+            reason: !d.companyId ? "Faltando companyId ou nulo" : "Valor ou data inválidos ou vazios",
+            item
+          });
+          return;
+        }
+
+        if (d.companyId === COMPANY_ID || !d.companyId) {
           txList.push({
             id: doc.id,
-            companyId: d.companyId,
+            companyId: d.companyId || COMPANY_ID,
             tipo: d.tipo,
             nome: d.nome,
             descricao: d.descricao || "",
@@ -353,6 +379,17 @@ export default function DashboardLayout() {
           });
         }
       });
+
+      registerDiagnostic({
+        sectionName: "Entradas e Saídas (Live)",
+        collectionName: "transacoes",
+        filtersApplied: ["companyId", `Limite: ${qLimit}`],
+        loadedCount: snapshot.size,
+        displayedCount: txList.length,
+        ignoredDocs,
+        lastUpdated: new Date().toLocaleTimeString()
+      });
+
       setTransactions(txList);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, "financeiro/geral/transacoes");
@@ -398,12 +435,24 @@ export default function DashboardLayout() {
 
     const unsubscribeExp = onSnapshot(qExp, (snapshot) => {
       const expList: Expense[] = [];
+      const ignoredDocs: any[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        if (d.companyId === COMPANY_ID) {
+        const item = { id: doc.id, ...d, companyId: d.companyId || COMPANY_ID };
+        const isValid = validateFinanceDocument(item, "expense");
+        if (!isValid) {
+          ignoredDocs.push({
+            id: doc.id,
+            reason: !d.companyId ? "Faltando companyId ou nulo" : "Valor ou tipo inválidos ou vencimento ausente",
+            item
+          });
+          return;
+        }
+
+        if (d.companyId === COMPANY_ID || !d.companyId) {
           expList.push({
             id: doc.id,
-            companyId: d.companyId,
+            companyId: d.companyId || COMPANY_ID,
             tipo: d.tipo,
             nome: d.nome,
             descricao: d.descricao || "",
@@ -461,9 +510,19 @@ export default function DashboardLayout() {
 
       // Sort on client-side: asc by dataVencimento, or fallback to data if dataVencimento is missing
       filtered.sort((a, b) => {
-        const valA = a.dataVencimento || a.data || "";
-        const valB = b.dataVencimento || b.data || "";
+        const valA = normalizeDateToISO(a.dataVencimento || a.data || "");
+        const valB = normalizeDateToISO(b.dataVencimento || b.data || "");
         return valA.localeCompare(valB);
+      });
+
+      registerDiagnostic({
+        sectionName: activeTab === "fixed-expenses" ? "Despesas Fixas (Live)" : (activeTab === "variable-expenses" ? "Despesas Variáveis (Live)" : "Despesas Gerais (Live)"),
+        collectionName: "despesas",
+        filtersApplied: ["companyId", `Tab: ${activeTab}`],
+        loadedCount: snapshot.size,
+        displayedCount: filtered.length,
+        ignoredDocs,
+        lastUpdated: new Date().toLocaleTimeString()
       });
 
       setExpenses(filtered);
@@ -492,10 +551,10 @@ export default function DashboardLayout() {
       const imList: PropertyCostCenter[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        if (d.companyId === COMPANY_ID) {
+        if (d.companyId === COMPANY_ID || !d.companyId) {
           imList.push({
             id: doc.id,
-            companyId: d.companyId,
+            companyId: d.companyId || COMPANY_ID,
             nome: d.nome,
             tipo: d.tipo || "casa",
             endereco: d.endereco || "",
@@ -532,8 +591,8 @@ export default function DashboardLayout() {
       const list: BankAccount[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        if (d.companyId === COMPANY_ID) {
-          list.push({ id: doc.id, ...d } as BankAccount);
+        if (d.companyId === COMPANY_ID || !d.companyId) {
+          list.push({ id: doc.id, ...d, companyId: d.companyId || COMPANY_ID } as BankAccount);
         }
       });
       setBanks(list);
@@ -546,8 +605,8 @@ export default function DashboardLayout() {
       const list: Investment[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        if (d.companyId === COMPANY_ID) {
-          list.push({ id: doc.id, ...d } as Investment);
+        if (d.companyId === COMPANY_ID || !d.companyId) {
+          list.push({ id: doc.id, ...d, companyId: d.companyId || COMPANY_ID } as Investment);
         }
       });
       setInvestments(list);
@@ -560,8 +619,8 @@ export default function DashboardLayout() {
       const list: Asset[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        if (d.companyId === COMPANY_ID) {
-          list.push({ id: doc.id, ...d } as Asset);
+        if (d.companyId === COMPANY_ID || !d.companyId) {
+          list.push({ id: doc.id, ...d, companyId: d.companyId || COMPANY_ID } as Asset);
         }
       });
       setAssets(list);
@@ -593,10 +652,10 @@ export default function DashboardLayout() {
       const list: CardInvoice[] = [];
       snapshot.forEach((doc) => {
         const d = doc.data();
-        if (d.companyId === COMPANY_ID) {
+        if (d.companyId === COMPANY_ID || !d.companyId) {
           list.push({
             id: doc.id,
-            companyId: d.companyId,
+            companyId: d.companyId || COMPANY_ID,
             cartaoId: d.cartaoId || "",
             cartaoNome: d.cartaoNome || "",
             banco: d.banco || "",
@@ -640,16 +699,32 @@ export default function DashboardLayout() {
   // Filters calculation
   // 1. Transactions filtered
   const filteredTransactions = React.useMemo(() => {
-    return transactions.filter((t) => {
-      if (selectedMonth && !t.data.startsWith(selectedMonth)) return false;
+    const res = transactions.filter((t) => {
+      if (!isAccumulatedFilter(selectedMonth)) {
+        const txComp = getCompetenceFromAnyDate(t);
+        if (txComp !== selectedMonth) return false;
+      }
       if (txDateStart && t.data < txDateStart) return false;
       if (txDateEnd && t.data > txDateEnd) return false;
-      if (txType !== "todos" && t.tipo !== txType) return false;
+      if (txType !== "todos") {
+        const normType = t.tipo === "saída" ? "saida" : (t.tipo === "entrada" ? "entrada" : t.tipo);
+        const filterType = txType === "saída" ? "saida" : (txType === "entrada" ? "entrada" : txType);
+        if (normType !== filterType) return false;
+      }
       if (txCategory !== "todas" && t.categoria !== txCategory) return false;
       if (txPaymentMethod !== "todos" && t.formaPagamento !== txPaymentMethod) return false;
       return true;
     });
-  }, [transactions, selectedMonth, txDateStart, txDateEnd, txType, txCategory, txPaymentMethod]);
+
+    if (activeTab === "transactions") {
+      console.log("Seção ativa: transactions");
+      console.log("Filtro selecionado (Ciclo):", selectedMonth);
+      console.log("É acumulado?", isAccumulatedFilter(selectedMonth));
+      console.log("Dados carregados (Transactions):", transactions);
+      console.log("Dados filtrados (Transactions):", res);
+    }
+    return res;
+  }, [transactions, selectedMonth, txDateStart, txDateEnd, txType, txCategory, txPaymentMethod, activeTab]);
 
   // 2. Fixed Expenses filtered
   const availableCycles = React.useMemo(() => {
@@ -657,11 +732,11 @@ export default function DashboardLayout() {
   }, [expenses]);
 
   const filteredFixedExpenses = React.useMemo(() => {
-    return expenses.filter((e) => {
+    const res = expenses.filter((e) => {
       if (e.tipo !== "fixa") return false;
 
       // Apply global cycle filter (selectedMonth)
-      if (selectedMonth) {
+      if (!isAccumulatedFilter(selectedMonth)) {
         let comp = e.competencia;
         if (!comp && e.dataVencimento) {
           comp = getCompetenceFromDateStr(e.dataVencimento);
@@ -677,14 +752,10 @@ export default function DashboardLayout() {
           if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
         }
       } else {
-        // Apply standard period filter
+        // In accumulated mode, only apply date range filters if personalized
         if (fixedPeriodFilter === "personalizado") {
           if (fixedVencimentoStart && e.dataVencimento < fixedVencimentoStart) return false;
           if (fixedVencimentoEnd && e.dataVencimento > fixedVencimentoEnd) return false;
-        } else {
-          const { start, end } = getDateRangeFromPeriodFilter(fixedPeriodFilter, todayStr);
-          if (start && e.dataVencimento < start) return false;
-          if (end && e.dataVencimento > end) return false;
         }
       }
 
@@ -734,6 +805,15 @@ export default function DashboardLayout() {
       }
       return true;
     });
+
+    if (activeTab === "fixed-expenses") {
+      console.log("Seção ativa: fixed-expenses");
+      console.log("Filtro selecionado (Ciclo):", selectedMonth);
+      console.log("É acumulado?", isAccumulatedFilter(selectedMonth));
+      console.log("Dados carregados (Fixed Expenses):", expenses);
+      console.log("Dados filtrados (Fixed Expenses):", res);
+    }
+    return res;
   }, [
     expenses,
     selectedMonth,
@@ -746,14 +826,18 @@ export default function DashboardLayout() {
     fixedPaymentMethod,
     fixedImovelFilter,
     fixedRecurrenceFilter,
-    fixedParcelamentoFilter
+    fixedParcelamentoFilter,
+    activeTab
   ]);
 
   // 3. Variable Expenses filtered
   const filteredVariableExpenses = React.useMemo(() => {
-    return expenses.filter((e) => {
+    const res = expenses.filter((e) => {
       if (e.tipo !== "variavel") return false;
-      if (selectedMonth && !e.data.startsWith(selectedMonth)) return false;
+      if (!isAccumulatedFilter(selectedMonth)) {
+        const itemComp = getCompetenceFromAnyDate(e);
+        if (itemComp !== selectedMonth) return false;
+      }
       if (variableDateStart && e.data < variableDateStart) return false;
       if (variableDateEnd && e.data > variableDateEnd) return false;
       if (variableStatus !== "todos" && e.status !== variableStatus) return false;
@@ -771,6 +855,15 @@ export default function DashboardLayout() {
 
       return true;
     });
+
+    if (activeTab === "variable-expenses") {
+      console.log("Seção ativa: variable-expenses");
+      console.log("Filtro selecionado (Ciclo):", selectedMonth);
+      console.log("É acumulado?", isAccumulatedFilter(selectedMonth));
+      console.log("Dados carregados (Variable Expenses):", expenses);
+      console.log("Dados filtrados (Variable Expenses):", res);
+    }
+    return res;
   }, [
     expenses,
     selectedMonth,
@@ -779,7 +872,8 @@ export default function DashboardLayout() {
     variableStatus,
     variableCategory,
     variablePaymentMethod,
-    variableImovelFilter
+    variableImovelFilter,
+    activeTab
   ]);
 
   // Clear filters helper
@@ -943,7 +1037,7 @@ export default function DashboardLayout() {
   // ----------------------------------------
   // Section calculations (Dynamic calculations based on user instructions)
   // 1. All-time general metrics
-  const totalBancosAtivos = banks.filter(b => b.ativo).reduce((sum, b) => sum + (b.saldoAtual || 0), 0);
+  const totalBancosAtivos = calculateBankBalance(banks);
   const totalInvestidoAtivos = investments.filter(i => i.ativo).reduce((sum, i) => sum + (i.valorAtual || 0), 0);
   const totalBensAtivos = assets.filter(a => a.ativo).reduce((sum, a) => sum + (a.valorEstimado || 0), 0);
   const patrimonioConsolidado = totalBancosAtivos + totalInvestidoAtivos + totalBensAtivos;
@@ -951,28 +1045,27 @@ export default function DashboardLayout() {
   const totalEntradasAll = transactions.filter(t => t.tipo === "entrada").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   const totalSaidasAll = transactions.filter(t => t.tipo === "saida").reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
   const totalDespesasPagasAll = expenses.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
-  const saldoAtualAllTime = totalBancosAtivos;
 
-  // 2. Month-specific general metrics (Dynamic filter on selected month)
-  const entriesInSelectedMonth = transactions.filter(t => t.tipo === "entrada" && (!selectedMonth || t.data.startsWith(selectedMonth)));
-  const exitsInSelectedMonth = transactions.filter(t => t.tipo === "saida" && (!selectedMonth || t.data.startsWith(selectedMonth)));
-  const fixedInSelectedMonth = expenses.filter(e => e.tipo === "fixa" && (!selectedMonth || e.dataVencimento.startsWith(selectedMonth)));
-  const variableInSelectedMonth = expenses.filter(e => e.tipo === "variavel" && (!selectedMonth || e.data.startsWith(selectedMonth)));
+  // 2. Month-specific general metrics via centralized overview cards calculator
+  const overviewMetrics = React.useMemo(() => {
+    return calculateOverviewCards({
+      transactions,
+      expenses,
+      banks,
+      selectedCycle: selectedMonth,
+      todayStr
+    });
+  }, [transactions, expenses, banks, selectedMonth, todayStr]);
 
-  const totalEntradasMonth = entriesInSelectedMonth.reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
-  const totalSaidasMonth = exitsInSelectedMonth.reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
-  const totalDespesasFixasMonth = fixedInSelectedMonth.reduce((sum, e) => sum + e.valor, 0);
-  const totalDespesasVariaveisMonth = variableInSelectedMonth.reduce((sum, e) => sum + e.valor, 0);
+  const saldoAtualAllTime = overviewMetrics.saldoAtual;
+  const totalEntradasMonth = overviewMetrics.entradas;
+  const totalSaidasMonth = overviewMetrics.saidas;
+  const resultadoDoMes = overviewMetrics.resultadoCiclo;
+  const totalDespesasFixasMonth = overviewMetrics.despesasFixas;
+  const totalDespesasVariaveisMonth = overviewMetrics.despesasVariaveis;
+  const overdueExpensesCount = overviewMetrics.despesasVencidas;
+  const todayExpensesCount = overviewMetrics.vencemHoje;
 
-  const fixedPaidMonth = fixedInSelectedMonth.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
-  const variablePaidMonth = variableInSelectedMonth.filter(e => e.status === "pago" && !e.saidaGerada).reduce((sum, e) => sum + e.valor, 0);
-  const totalDespesasPagasMonth = fixedPaidMonth + variablePaidMonth;
-  const resultadoDoMes = totalEntradasMonth - totalSaidasMonth;
-
-  // Overdue, today, upcoming calculations
-  const overdueExpensesCount = expenses.filter(e => e.tipo === "fixa" && e.status !== "pago" && e.dataVencimento < todayStr).reduce((sum, e) => sum + e.valor, 0);
-  const todayExpensesCount = expenses.filter(e => e.tipo === "fixa" && e.status !== "pago" && e.dataVencimento === todayStr).reduce((sum, e) => sum + e.valor, 0);
-  
   const getDaysDiff = (dateStr: string) => {
     if (!dateStr || !todayStr) return 999;
     const itemDate = new Date(dateStr + "T00:00:00");
@@ -2013,7 +2106,8 @@ export default function DashboardLayout() {
           </div>
 
           {/* 1. Dynamic Render according to selected tab */}
-          {activeTab === "overview" && (
+          <ErrorBoundary sectionName={activeTab}>
+            {activeTab === "overview" && (
             <div className="space-y-6">
               
               {/* Overview cards - dynamic, beautiful */}
@@ -2157,19 +2251,53 @@ export default function DashboardLayout() {
 
               </div>
 
+              {/* Discrete Diagnostic Section */}
+              <div className="rounded-xl bg-zinc-950/40 border border-white/5 p-4">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider font-mono">
+                    Diagnóstico de Origem dos Dados (Despesas Fixas)
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-[10px] text-zinc-500 font-mono">
+                  <div>
+                    <span className="text-zinc-600 block text-[9px] uppercase">Fonte Despesas Fixas</span>
+                    <span className="text-zinc-400 text-[10px]">financeiro/geral/despesas</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-600 block text-[9px] uppercase">Filtro</span>
+                    <span className="text-zinc-400 text-[10px]">tipo === "fixa"</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-600 block text-[9px] uppercase">Ciclo (selectedCycle)</span>
+                    <span className="text-emerald-500 font-bold text-[10px]">{selectedMonth || "Todos (Acumulado)"}</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-600 block text-[9px] uppercase">Registros (Carregados / Filtrados)</span>
+                    <span className="text-zinc-300 text-[10px]">
+                      {expenses.length} / {expenses.filter(e => isAccumulatedFilter(selectedMonth) || getCompetenceFromAnyDate(e) === selectedMonth).length}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-600 block text-[9px] uppercase">Total calculado</span>
+                    <span className="text-amber-400 font-bold text-[10px]">{formatCurrency(totalDespesasFixasMonth)}</span>
+                  </div>
+                </div>
+              </div>
+
               {/* Grid content */}
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
                 <div className="xl:col-span-2 space-y-6">
                   {/* Recent Transactions Table */}
                   <TransactionTable
-                    transactions={transactions.filter(t => !selectedMonth || t.data.startsWith(selectedMonth)).slice(0, 5)}
+                    transactions={transactions.filter(t => isAccumulatedFilter(selectedMonth) || getCompetenceFromAnyDate(t) === selectedMonth).slice(0, 5)}
                     onEdit={handleTransactionEdit}
                     onDelete={handleTransactionDelete}
                   />
 
                   {/* Recent Expenses Table */}
                   <ExpenseTable
-                    expenses={expenses.filter(e => !selectedMonth || (e.tipo === "fixa" ? e.dataVencimento.startsWith(selectedMonth) : e.data.startsWith(selectedMonth))).slice(0, 5)}
+                    expenses={expenses.filter(e => isAccumulatedFilter(selectedMonth) || getCompetenceFromAnyDate(e) === selectedMonth).slice(0, 5)}
                     onEdit={handleExpenseEdit}
                     onDelete={handleExpenseDelete}
                     onConfirmPaid={handleConfirmPaid}
@@ -2835,6 +2963,29 @@ export default function DashboardLayout() {
               userEmail={currentUser?.email || ""}
             />
           )}
+
+          </ErrorBoundary>
+
+          {/* Collapse/Expand Real-time Diagnostics */}
+          <div className="pt-8 border-t border-white/5 space-y-4">
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setShowDiagnostics(!showDiagnostics)}
+                className="flex items-center gap-2 text-xs font-bold text-zinc-500 hover:text-white transition-colors uppercase tracking-wider font-mono cursor-pointer"
+              >
+                <span>{showDiagnostics ? "▼ Ocultar Central de Rastreabilidade" : "▶ Mostrar Central de Rastreabilidade"}</span>
+                <span className="px-1.5 py-0.5 bg-zinc-900 border border-white/10 text-[9px] rounded-md text-emerald-400 font-mono">INTEGRIDADE</span>
+              </button>
+              <div className="text-[10px] text-zinc-500 font-mono">
+                Painel: <span className="text-emerald-400">{COMPANY_ID}</span>
+              </div>
+            </div>
+            {showDiagnostics && (
+              <div className="animate-fadeIn">
+                <DataDiagnosticPanel />
+              </div>
+            )}
+          </div>
 
         </div>
 

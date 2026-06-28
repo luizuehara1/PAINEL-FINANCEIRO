@@ -1,4 +1,5 @@
 import { Expense } from "@/types/finance";
+import { normalizeDateToISO } from "./date-utils";
 
 const MONTH_NAMES = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -15,7 +16,7 @@ export function getCompetenceFromDate(date: Date): string {
 }
 
 /**
- * Extracts YYYY-MM competence string from date string (YYYY-MM-DD or YYYY-MM).
+ * Extracts YYYY-MM competence string from date string (YYYY-MM-DD, DD/MM/YYYY or YYYY-MM) safely.
  */
 export function getCompetenceFromDateStr(dateStr: string): string {
   if (!dateStr) return "";
@@ -23,21 +24,10 @@ export function getCompetenceFromDateStr(dateStr: string): string {
   // If it's already YYYY-MM
   if (/^\d{4}-\d{2}$/.test(dateStr)) return dateStr;
   
-  const parts = dateStr.split("-");
-  if (parts.length >= 2) {
-    const year = parts[0];
-    const month = parts[1].padStart(2, "0");
-    if (year.length === 4 && month.length === 2) {
-      return `${year}-${month}`;
-    }
+  const iso = normalizeDateToISO(dateStr);
+  if (iso && iso.length >= 7) {
+    return iso.substring(0, 7);
   }
-  
-  try {
-    const d = new Date(dateStr);
-    if (!isNaN(d.getTime())) {
-      return getCompetenceFromDate(d);
-    }
-  } catch (e) {}
   
   return "";
 }

@@ -15,13 +15,16 @@ import { Transaction, Expense, BankAccount, Investment, Asset } from "@/types/fi
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
+import { calculateOverviewCards } from "@/lib/finance-calculations";
+import { isAccumulatedFilter } from "@/lib/filter-utils";
 
 interface FinanceSummaryCardsProps {
   transactions: Transaction[];
   expenses: Expense[];
+  selectedCycle?: string | null;
 }
 
-export default function FinanceSummaryCards({ transactions, expenses }: FinanceSummaryCardsProps) {
+export default function FinanceSummaryCards({ transactions, expenses, selectedCycle = "" }: FinanceSummaryCardsProps) {
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -91,10 +94,20 @@ export default function FinanceSummaryCards({ transactions, expenses }: FinanceS
     };
   }, [userEmail]);
 
-  // 1. Core calculations
-  const totalBancosAtivos = banks
-    .filter((b) => b.ativo)
-    .reduce((sum, b) => sum + (b.saldoAtual || 0), 0);
+  // 1. Core calculations via centralized overview cards calculator
+  const overviewMetrics = React.useMemo(() => {
+    return calculateOverviewCards({
+      transactions,
+      expenses,
+      banks,
+      selectedCycle
+    });
+  }, [transactions, expenses, banks, selectedCycle]);
+
+  const totalBancosAtivos = overviewMetrics.saldoAtual;
+  const totalEntradas = overviewMetrics.entradas;
+  const totalSaidas = overviewMetrics.saidas;
+  const resultadoCiclo = overviewMetrics.resultadoCiclo;
 
   const totalInvested = investments
     .filter((i) => i.ativo)
@@ -105,16 +118,6 @@ export default function FinanceSummaryCards({ transactions, expenses }: FinanceS
     .reduce((sum, a) => sum + (a.valorEstimado || 0), 0);
 
   const patrimonConsolidado = totalBancosAtivos + totalInvested + totalAssets;
-
-  const totalEntradas = transactions
-    .filter((t) => t.tipo === "entrada")
-    .reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
-
-  const totalSaidas = transactions
-    .filter((t) => t.tipo === "saida")
-    .reduce((sum, t) => sum + Math.abs(t.valor || 0), 0);
-
-  const resultadoCiclo = totalEntradas - totalSaidas;
 
   const cardsData = [
     {

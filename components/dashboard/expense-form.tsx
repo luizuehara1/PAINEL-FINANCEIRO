@@ -16,6 +16,7 @@ import {
   isCreditCardPayment 
 } from "@/lib/installment-utils";
 import { getCompetenceFromDateStr } from "@/lib/cycle-utils";
+import { toDateSafe, normalizeDateToISO } from "@/lib/date-utils";
 
 interface ExpenseFormProps {
   isOpen: boolean;
@@ -221,7 +222,8 @@ export default function ExpenseForm({
     setDataVencimento(val);
     setDataPrimeiraParcela(val);
     if (val) {
-      const day = Number(val.split("-")[2]);
+      const parsed = toDateSafe(val);
+      const day = parsed.getDate();
       if (!isNaN(day) && day >= 1 && day <= 31) {
         setDiaVencimento(day);
       }

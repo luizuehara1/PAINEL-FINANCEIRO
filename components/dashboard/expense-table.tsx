@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Expense } from "@/types/finance";
 import { formatCompetenceLabel } from "@/lib/cycle-utils";
+import { normalizeDateToISO } from "@/lib/date-utils";
 import { motion, AnimatePresence } from "framer-motion";
 import NoteViewerModal from "./note-viewer-modal";
 
@@ -97,14 +98,15 @@ export default function ExpenseTable({
 
     // Pendente types
     if (expense.tipo === "fixa") {
-      if (expense.dataVencimento < todayStr) {
+      const isoDueDate = normalizeDateToISO(expense.dataVencimento);
+      if (isoDueDate < todayStr) {
         return {
           label: "Vencido",
           bgClass: "bg-red-500/10 text-red-400 border-red-500/20",
           indicatorColor: "bg-red-400",
           rowClass: "text-red-300/90 bg-red-950/[0.03] hover:bg-red-950/[0.06] border-l-[3px] border-red-500/40",
         };
-      } else if (expense.dataVencimento === todayStr) {
+      } else if (isoDueDate === todayStr) {
         return {
           label: "Vence Hoje",
           bgClass: "bg-amber-500/10 text-amber-400 border-amber-500/20",
@@ -148,9 +150,11 @@ export default function ExpenseTable({
       if (statusFilter === "pago") {
         matchesStatus = e.status === "pago" && !e.baixadaCompletamente;
       } else if (statusFilter === "pendente") {
-        matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && (e.tipo !== "fixa" || e.dataVencimento >= todayStr);
+        const isoDueDate = normalizeDateToISO(e.dataVencimento);
+        matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && (e.tipo !== "fixa" || isoDueDate >= todayStr);
       } else if (statusFilter === "vencido") {
-        matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && e.tipo === "fixa" && e.dataVencimento < todayStr;
+        const isoDueDate = normalizeDateToISO(e.dataVencimento);
+        matchesStatus = e.status === "pendente" && !e.baixadaCompletamente && e.tipo === "fixa" && isoDueDate < todayStr;
       } else if (statusFilter === "baixada") {
         matchesStatus = !!e.baixadaCompletamente;
       }

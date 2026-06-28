@@ -7,13 +7,20 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { Expense } from "@/types/finance";
+import { 
+  normalizeDateToISO, 
+  getCompetenceFromDate, 
+  getNextCompetence, 
+  createDueDateFromCompetence 
+} from "./date-utils";
 
 /**
- * Returns competence in "YYYY-MM" format.
+ * Returns competence in "YYYY-MM" format safely.
  */
 export function getExpenseCompetence(dateStr: string): string {
   if (!dateStr) return "";
-  return dateStr.substring(0, 7); // "YYYY-MM"
+  const iso = normalizeDateToISO(dateStr);
+  return iso.substring(0, 7); // "YYYY-MM"
 }
 
 /**
@@ -21,28 +28,10 @@ export function getExpenseCompetence(dateStr: string): string {
  */
 export function getNextMonthDueDate(currentDueDateStr: string, diaVencimento: number): string {
   if (!currentDueDateStr) return "";
-  const parts = currentDueDateStr.split("-");
-  if (parts.length < 2) return currentDueDateStr;
-
-  const yearStr = parts[0];
-  const monthStr = parts[1];
-  
-  let year = parseInt(yearStr);
-  let month = parseInt(monthStr); // 1-12
-  
-  month += 1;
-  if (month > 12) {
-    month = 1;
-    year += 1;
-  }
-  
-  // Find the last day of the calculated month to handle short months (e.g., February)
-  const lastDay = new Date(year, month, 0).getDate();
-  const day = Math.min(diaVencimento, lastDay);
-  
-  const mm = month.toString().padStart(2, "0");
-  const dd = day.toString().padStart(2, "0");
-  return `${year}-${mm}-${dd}`;
+  const isoDate = normalizeDateToISO(currentDueDateStr);
+  const currentCompetence = isoDate.substring(0, 7); // YYYY-MM
+  const nextCompetence = getNextCompetence(currentCompetence);
+  return createDueDateFromCompetence(nextCompetence, diaVencimento);
 }
 
 /**
