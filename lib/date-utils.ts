@@ -111,10 +111,24 @@ export function createDueDateFromCompetence(competence: string, dueDay: number):
 }
 
 /**
- * Normalizes any date string (DD/MM/YYYY or YYYY-MM-DD) to a standard ISO YYYY-MM-DD format for correct comparison.
+ * Normalizes any date string (DD/MM/YYYY or YYYY-MM-DD) or Date/Timestamp object to a standard ISO YYYY-MM-DD format for correct comparison.
  */
-export function normalizeDateToISO(dateStr: string | null | undefined): string {
+export function normalizeDateToISO(dateStr: any): string {
   if (!dateStr) return "";
+  
+  // If it's a Firestore Timestamp or Date object, let's format it directly
+  if (typeof dateStr === "object") {
+    try {
+      const d = toDateSafe(dateStr);
+      if (d && !isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${dd}`;
+      }
+    } catch (e) {}
+  }
+
   const str = String(dateStr).trim();
   
   // Try DD/MM/YYYY
@@ -133,7 +147,7 @@ export function normalizeDateToISO(dateStr: string | null | undefined): string {
   }
   
   try {
-    const d = new Date(dateStr);
+    const d = new Date(str);
     if (!isNaN(d.getTime())) {
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -142,7 +156,7 @@ export function normalizeDateToISO(dateStr: string | null | undefined): string {
     }
   } catch (e) {}
   
-  return dateStr;
+  return str;
 }
 
 /**

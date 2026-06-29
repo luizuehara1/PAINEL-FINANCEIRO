@@ -46,7 +46,7 @@ export default function RecurringRepairPanel() {
 
     try {
       const q = query(
-        collection(db, "despesas"),
+        collection(db, "financeiro", "geral", "despesas"),
         where("companyId", "==", COMPANY_ID),
         where("tipo", "==", "fixa")
       );
@@ -192,7 +192,7 @@ export default function RecurringRepairPanel() {
     try {
       let deletedCount = 0;
       for (const id of selectedIds) {
-        await deleteDoc(doc(db, "despesas", id));
+        await deleteDoc(doc(db, "financeiro", "geral", "despesas", id));
         deletedCount++;
       }
 
@@ -213,7 +213,7 @@ export default function RecurringRepairPanel() {
     }
 
     try {
-      await deleteDoc(doc(db, "despesas", id));
+      await deleteDoc(doc(db, "financeiro", "geral", "despesas", id));
       setSuccessMessage("Lançamento removido com sucesso.");
       setItems(prev => prev.filter(item => item.expense.id !== id));
       setSelectedIds(prev => prev.filter(x => x !== id));
